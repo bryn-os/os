@@ -452,18 +452,12 @@ function AccueilPatient({ setPage, setRecherche }) {
 function ResultatsPatient({ recherche, setPage }) {
   const fbReady=useFirebaseReady();
   const [resultatsFirebase,setResultatsFirebase]=useState([]);
-  const [loading,setLoading]=useState(true);
-
-  // Timer global — arrête le spinner après 5s max quoi qu'il arrive
-  useEffect(()=>{
-    const timer=setTimeout(()=>setLoading(false), 5000);
-    return()=>clearTimeout(timer);
-  },[recherche]);
+  const [fbLoading,setFbLoading]=useState(true);
 
   useEffect(()=>{
+    setResultatsFirebase([]); setFbLoading(true);
     if(!fbReady)return;
-    const r=getDB().ref("stock");
-    r.once("value").then(snap=>{
+    getDB().ref("stock").once("value").then(snap=>{
       const found=[];
       if(snap.exists()){
         Object.entries(snap.val()).forEach(([uid,items])=>{
@@ -475,19 +469,13 @@ function ResultatsPatient({ recherche, setPage }) {
       }
       found.sort((a,b)=>a.prix-b.prix);
       setResultatsFirebase(found);
-      setLoading(false);
-    }).catch(()=>setLoading(false));
+      setFbLoading(false);
+    }).catch(()=>setFbLoading(false));
   },[fbReady,recherche]);
 
-  // Résultats du catalogue local (toujours disponibles)
+  // Résultats catalogue — IMMÉDIATS, pas besoin de Firebase
   const catalogueMatch = CATALOGUE_MEDICAMENTS.filter(m=>
     m.nom.toLowerCase().includes(recherche.toLowerCase())
-  );
-
-  if(loading)return(
-    <div className="main">
-      <div className="loading"><div className="spinner"></div> Recherche dans les pharmacies de Yaoundé...</div>
-    </div>
   );
 
   const hasFbResults = resultatsFirebase.length > 0;
