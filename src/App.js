@@ -450,28 +450,117 @@ function AccueilPatient({ setPage, setRecherche }) {
 // 🔍 RÉSULTATS
 // ══════════════════════════════════════════════════════════════════════════════
 function ResultatsPatient({ recherche, setPage }) {
-  const fbReady=useFirebaseReady(); const [resultats,setResultats]=useState([]); const [loading,setLoading]=useState(true);
+  const fbReady=useFirebaseReady();
+  const [resultatsFirebase,setResultatsFirebase]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  // Timer global — arrête le spinner après 5s max quoi qu'il arrive
+  useEffect(()=>{
+    const timer=setTimeout(()=>setLoading(false), 5000);
+    return()=>clearTimeout(timer);
+  },[recherche]);
+
   useEffect(()=>{
     if(!fbReady)return;
     const r=getDB().ref("stock");
-    r.on("value",snap=>{const found=[];if(snap.exists()){Object.entries(snap.val()).forEach(([uid,items])=>{Object.entries(items).forEach(([itemId,item])=>{if(item.nom?.toLowerCase().includes(recherche.toLowerCase())&&item.qte>0)found.push({...item,itemId,pharmacieUid:uid});});});}found.sort((a,b)=>a.prix-b.prix);setResultats(found);setLoading(false);});
-    return()=>r.off();
+    r.once("value").then(snap=>{
+      const found=[];
+      if(snap.exists()){
+        Object.entries(snap.val()).forEach(([uid,items])=>{
+          Object.entries(items).forEach(([itemId,item])=>{
+            if(item.nom?.toLowerCase().includes(recherche.toLowerCase())&&item.qte>0)
+              found.push({...item,itemId,pharmacieUid:uid});
+          });
+        });
+      }
+      found.sort((a,b)=>a.prix-b.prix);
+      setResultatsFirebase(found);
+      setLoading(false);
+    }).catch(()=>setLoading(false));
   },[fbReady,recherche]);
-  if(loading)return <div className="main"><div className="loading"><div className="spinner"></div> Recherche dans {PHARMACIES_YAOUNDE.length}+ pharmacies...</div></div>;
+
+  // Résultats du catalogue local (toujours disponibles)
+  const catalogueMatch = CATALOGUE_MEDICAMENTS.filter(m=>
+    m.nom.toLowerCase().includes(recherche.toLowerCase())
+  );
+
+  if(loading)return(
+    <div className="main">
+      <div className="loading"><div className="spinner"></div> Recherche dans les pharmacies de Yaoundé...</div>
+    </div>
+  );
+
+  const hasFbResults = resultatsFirebase.length > 0;
+
   return(
     <div className="main">
-      <div className="result-toprow"><button className="btn btn-secondary btn-sm" onClick={()=>setPage("accueil")}>← Retour</button><div><div className="result-title">{recherche}</div><div className="result-sub">{resultats.length} résultat(s) · Triés par prix croissant</div></div></div>
-      {resultats.length>0&&<div className="alert alert-success mb16"><span className="alert-ico">💡</span><span>Meilleur prix : <strong>{resultats[0].pharmacieNom}</strong> à <strong>{resultats[0].prix} FCFA</strong></span></div>}
-      {resultats.length===0&&<div className="empty"><div className="empty-ico">😔</div><h3>Non disponible actuellement</h3><p>Aucune pharmacie connectée n'a ce médicament en stock.<br/>Revenez plus tard ou essayez un autre nom.</p><button className="btn btn-secondary" style={{marginTop:16}} onClick={()=>setPage("accueil")}>← Retour</button></div>}
-      <div className="results-list">{resultats.map((r,i)=>(
-        <div key={r.itemId} className={"result-card"+(i===0?" best":"")} style={{animationDelay:(i*0.07)+"s"}}>
-          <div className={"result-header"+(i===0?" best":"")}><div className="ph-ico">🏥</div><div className="ph-info"><div className="ph-name">{r.pharmacieNom||"Pharmacie"}</div><div className="ph-dist">📍 {r.quartier||"Yaoundé"}</div></div>{i===0&&<span className="best-badge">🏆 Meilleur prix</span>}</div>
-          <div className="result-body">
-            <div><div className={"price-big"+(i!==0?" not-best":"")}>{r.prix} FCFA</div><div className="mt6"><span className={"stock-tag "+(r.qte<=10?"stock-low":"stock-ok")}>{r.qte<=10?"⚠ Stock faible ("+r.qte+")":"✓ En stock ("+r.qte+")"}</span></div></div>
-            <button className={"btn btn-sm "+(i===0?"btn-primary":"btn-secondary")} onClick={()=>setPage("carte")}>🗺 Voir sur carte</button>
+      <div className="result-toprow">
+        <button className="btn btn-secondary btn-sm" onClick={()=>setPage("accueil")}>← Retour</button>
+        <div><div className="result-title">{recherche}</div>
+        <div className="result-sub">{hasFbResults ? resultatsFirebase.length+" pharmacie(s) · Triés par prix" : "Prix de référence au Cameroun"}</div></div>
+      </div>
+
+      {/* ── RÉSULTATS FIREBASE (stocks réels) ── */}
+      {hasFbResults && (
+        <>
+          <div className="alert alert-success mb16"><span className="alert-ico">💡</span><span>Meilleur prix : <strong>{resultatsFirebase[0].pharmacieNom}</strong> à <strong>{resultatsFirebase[0].prix} FCFA</strong></span></div>
+          <div className="results-list mb24">
+            {resultatsFirebase.map((r,i)=>(
+              <div key={r.itemId} className={"result-card"+(i===0?" best":"")} style={{animationDelay:(i*0.07)+"s"}}>
+                <div className={"result-header"+(i===0?" best":"")}><div className="ph-ico">🏥</div><div className="ph-info"><div className="ph-name">{r.pharmacieNom||"Pharmacie"}</div><div className="ph-dist">📍 {r.quartier||"Yaoundé"}</div></div>{i===0&&<span className="best-badge">🏆 Meilleur prix</span>}</div>
+                <div className="result-body">
+                  <div><div className={"price-big"+(i!==0?" not-best":"")}>{r.prix} FCFA</div><div className="mt6"><span className={"stock-tag "+(r.qte<=10?"stock-low":"stock-ok")}>{r.qte<=10?"⚠ Stock faible ("+r.qte+")":"✓ En stock ("+r.qte+")"}</span></div></div>
+                  <button className={"btn btn-sm "+(i===0?"btn-primary":"btn-secondary")} onClick={()=>setPage("carte")}>🗺 Voir sur carte</button>
+                </div>
+              </div>
+            ))}
           </div>
+        </>
+      )}
+
+      {/* ── RÉSULTATS CATALOGUE (prix de référence) ── */}
+      {catalogueMatch.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">📋 {hasFbResults ? "Informations sur ce médicament" : "Prix de référence au Cameroun"}</div>
+            {!hasFbResults && <span className="tag tag-blue">Aucune pharmacie connectée pour l'instant</span>}
+          </div>
+          {!hasFbResults && (
+            <div className="alert alert-warn mb16">
+              <span className="alert-ico">⏳</span>
+              <span>Les pharmacies de Yaoundé rejoignent Mediconline progressivement. En attendant, voici le prix de référence national pour ce médicament.</span>
+            </div>
+          )}
+          {catalogueMatch.map(m=>(
+            <div key={m.id} className="med-card mb16" style={{border:"1.5px solid var(--grey-border)",borderRadius:12,padding:"16px"}}>
+              <div className="med-icon" style={{background:"#F4F6F8",fontSize:"1.4rem",width:48,height:48,flexShrink:0}}>{m.emoji}</div>
+              <div className="med-info" style={{flex:1}}>
+                <div className="med-name">{m.nom}</div>
+                <div className="med-cat">{m.cat}</div>
+              </div>
+              <div className="med-price">
+                <div className="price-from">Prix réf.</div>
+                <div className="price-val">{m.prixRef} FCFA</div>
+              </div>
+            </div>
+          ))}
+          {!hasFbResults && (
+            <div className="alert alert-success mt16">
+              <span className="alert-ico">🏥</span>
+              <span>Vous êtes pharmacien ? <strong onClick={()=>setPage("dashboard")} style={{cursor:"pointer",textDecoration:"underline"}}>Inscrivez-vous gratuitement</strong> et publiez votre stock en temps réel !</span>
+            </div>
+          )}
         </div>
-      ))}</div>
+      )}
+
+      {catalogueMatch.length===0 && !hasFbResults && (
+        <div className="empty">
+          <div className="empty-ico">😔</div>
+          <h3>Médicament introuvable</h3>
+          <p>Essayez un autre nom ou une orthographe différente.</p>
+          <button className="btn btn-secondary" style={{marginTop:16}} onClick={()=>setPage("accueil")}>← Retour</button>
+        </div>
+      )}
     </div>
   );
 }
