@@ -288,6 +288,155 @@ const STOCK_DEMO = [
   { nom:"Oméprazole 20mg",                           cat:"Gastro",        prix:400,  qte:30  },
 ];
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🕐 LOGIQUE PHARMACIE DE GARDE
+// ══════════════════════════════════════════════════════════════════════════════
+function isOuvertMaintenant(ouverture="08:00", fermeture="22:00") {
+  const now = new Date();
+  const h = now.getHours()*60 + now.getMinutes();
+  const [oh,om] = ouverture.split(":").map(Number);
+  const [fh,fm] = fermeture.split(":").map(Number);
+  const open = oh*60+om, close = fh*60+fm;
+  if(close < open) return h >= open || h < close; // nuit (ex: 20h-06h)
+  return h >= open && h < close;
+}
+
+function getStatutPharmacie(ph) {
+  const ouvert = ph.ouvert !== false;
+  if(!ouvert) return { label:"Fermée", color:"#E63946", bg:"#FDECEA", garde:false };
+  const ouvertureMaintenant = isOuvertMaintenant(ph.ouverture||"08:00", ph.fermeture||"22:00");
+  const now = new Date();
+  const h = now.getHours();
+  if(h >= 20 || h < 6) return { label:"🌙 Garde de nuit", color:"#7B2FBE", bg:"#F3E8FF", garde:true };
+  if(!ouvertureMaintenant) return { label:"Fermée maintenant", color:"#F4A261", bg:"#FFF4E6", garde:false };
+  return { label:"✓ Ouverte", color:"#1A8A45", bg:"#E6FAF0", garde:false };
+}
+
+function AppelButton({ tel, size="sm" }) {
+  if(!tel) return null;
+  return (
+    <a href={"tel:"+tel} className={"btn btn-"+(size==="lg"?"primary":"secondary")+" btn-"+size}
+      style={{textDecoration:"none", display:"inline-flex", alignItems:"center", gap:6}}
+      onClick={e=>e.stopPropagation()}>
+      📞 {size==="lg" ? tel : "Appeler"}
+    </a>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🌙 PAGE PHARMACIES DE GARDE
+// ══════════════════════════════════════════════════════════════════════════════
+function PageGarde({ setPage }) {
+  const fbReady = useFirebaseReady();
+  const [extraPharma, setExtraPharma] = useState([]);
+  const [heure, setHeure] = useState(new Date());
+
+  useEffect(()=>{ const t=setInterval(()=>setHeure(new Date()),30000); return()=>clearInterval(t); },[]);
+  useEffect(()=>{
+    if(!fbReady)return;
+    const r=getDB().ref("pharmacies");
+    r.on("value",snap=>{if(snap.exists())setExtraPharma(Object.entries(snap.val()).map(([uid,ph])=>({uid,...ph})));});
+    return()=>r.off();
+  },[fbReady]);
+
+  const allPh = [...PHARMACIES_YAOUNDE, ...extraPharma];
+  const gardes   = allPh.filter(ph=>{ const s=getStatutPharmacie(ph); return s.garde; });
+  const ouvertes = allPh.filter(ph=>{ const s=getStatutPharmacie(ph); return !s.garde && s.label==="✓ Ouverte"; });
+  const fermees  = allPh.filter(ph=>{ const s=getStatutPharmacie(ph); return s.label==="Fermée maintenant"||s.label==="Fermée"; });
+
+  const now = heure;
+  const isNuit = now.getHours()>=20||now.getHours()<6;
+
+  return (
+    <div className="main">
+      <div className="page-toprow mb20">
+        <div>
+          <div className="page-title">🌙 Pharmacies de garde</div>
+          <div className="page-sub">
+            {now.toLocaleTimeString("fr-CM",{hour:"2-digit",minute:"2-digit"})} · {allPh.length} pharmacies à Yaoundé
+          </div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={()=>setPage("accueil")}>← Retour</button>
+      </div>
+
+      {isNuit && gardes.length===0 && (
+        <div className="alert mb20" style={{background:"#F3E8FF",border:"1px solid #C084FC",color:"#7B2FBE"}}>
+          <span className="alert-ico">🌙</span>
+          <span><strong>Nuit pharmaceutique</strong> — Les pharmacies de garde ci-dessous assurent la permanence cette nuit.</span>
+        </div>
+      )}
+
+      {/* GARDES DE NUIT */}
+      {gardes.length > 0 && (
+        <div className="card mb20" style={{border:"2px solid #7B2FBE"}}>
+          <div className="card-header">
+            <div className="card-title" style={{color:"#7B2FBE"}}>🌙 Gardes de nuit ({gardes.length})</div>
+            <span className="tag" style={{background:"#F3E8FF",color:"#7B2FBE"}}>Ouvertes maintenant</span>
+          </div>
+          {gardes.map((ph,i)=>(
+            <div key={ph.uid||ph.id||i} className="ph-row" style={{padding:"14px 0"}}>
+              <div className="ph-ico" style={{background:"#F3E8FF"}}>🌙</div>
+              <div className="ph-info">
+                <div className="ph-name">{ph.nom}</div>
+                <div className="ph-dist">📍 {ph.quartier}</div>
+                {ph.ouverture&&<div className="ph-dist">🕐 {ph.ouverture} – {ph.fermeture||"06:00"}</div>}
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
+                <AppelButton tel={ph.tel} size="sm"/>
+                <button className="btn btn-secondary btn-sm"
+                  onClick={()=>window.open(`https://www.google.com/maps/dir//${ph.lat},${ph.lng}`,"_blank")}>
+                  🗺 Itinéraire
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* OUVERTES */}
+      {ouvertes.length > 0 && (
+        <div className="card mb20">
+          <div className="card-header">
+            <div className="card-title">✅ Ouvertes en ce moment ({ouvertes.length})</div>
+            <span className="tag tag-green">Disponibles</span>
+          </div>
+          {ouvertes.map((ph,i)=>(
+            <div key={ph.uid||ph.id||i} className="ph-row" style={{padding:"12px 0"}}>
+              <div className="ph-ico">🏥</div>
+              <div className="ph-info">
+                <div className="ph-name">{ph.nom}</div>
+                <div className="ph-dist">📍 {ph.quartier} · 🕐 {ph.ouverture||"08:00"}–{ph.fermeture||"22:00"}</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <AppelButton tel={ph.tel} size="sm"/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* FERMÉES */}
+      {fermees.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title" style={{color:"var(--grey-text)"}}>Fermées ({fermees.length})</div>
+          </div>
+          {fermees.slice(0,8).map((ph,i)=>(
+            <div key={ph.uid||ph.id||i} className="ph-row" style={{padding:"10px 0",opacity:0.6}}>
+              <div className="ph-ico" style={{background:"#F4F6F8"}}>🏥</div>
+              <div className="ph-info">
+                <div className="ph-name">{ph.nom}</div>
+                <div className="ph-dist">📍 {ph.quartier} · Ouvre à {ph.ouverture||"08:00"}</div>
+              </div>
+              <AppelButton tel={ph.tel} size="sm"/>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 // ══════════════════════════════════════════════════════════════════════════════
 // 🗺 COMPOSANT CARTE LEAFLET
 // ══════════════════════════════════════════════════════════════════════════════
@@ -422,7 +571,7 @@ function AccueilPatient({ setPage, setRecherche }) {
         </div>
       </div>
       <div className="grid-4 mb24">
-        {[{ico:"🏥",num:allPh.length+"+",lbl:"Pharmacies à Yaoundé",bg:"#EBF4FF"},{ico:"💊",num:CATALOGUE_MEDICAMENTS.length+"+",lbl:"Médicaments référencés",bg:"#E6FAF0"},{ico:"🗺",num:"Carte",lbl:"Localisation temps réel",bg:"#FFF4E6",click:()=>setPage("carte")},{ico:"⚡",num:"Live",lbl:"Stocks synchronisés",bg:"#F3E8FF"}].map((s,i)=>(
+        {[{ico:"🏥",num:allPh.length+"+",lbl:"Pharmacies à Yaoundé",bg:"#EBF4FF"},{ico:"💊",num:CATALOGUE_MEDICAMENTS.length+"+",lbl:"Médicaments référencés",bg:"#E6FAF0"},{ico:"🗺",num:"Carte",lbl:"Localisation temps réel",bg:"#FFF4E6",click:()=>setPage("carte")},{ico:"🌙",num:"Garde",lbl:"Pharmacies de garde",bg:"#F3E8FF",click:()=>setPage("garde")}].map((s,i)=>(
           <div key={i} className="stat-card" style={{cursor:s.click?"pointer":"default"}} onClick={s.click}><div className="stat-icon" style={{background:s.bg}}>{s.ico}</div><div className="stat-num" style={{fontSize:typeof s.num==="string"&&s.num.length>4?"1rem":undefined}}>{s.num}</div><div className="stat-lbl">{s.lbl}</div></div>
         ))}
       </div>
@@ -498,7 +647,10 @@ function ResultatsPatient({ recherche, setPage }) {
                 <div className={"result-header"+(i===0?" best":"")}><div className="ph-ico">🏥</div><div className="ph-info"><div className="ph-name">{r.pharmacieNom||"Pharmacie"}</div><div className="ph-dist">📍 {r.quartier||"Yaoundé"}</div></div>{i===0&&<span className="best-badge">🏆 Meilleur prix</span>}</div>
                 <div className="result-body">
                   <div><div className={"price-big"+(i!==0?" not-best":"")}>{r.prix} FCFA</div><div className="mt6"><span className={"stock-tag "+(r.qte<=10?"stock-low":"stock-ok")}>{r.qte<=10?"⚠ Stock faible ("+r.qte+")":"✓ En stock ("+r.qte+")"}</span></div></div>
-                  <button className={"btn btn-sm "+(i===0?"btn-primary":"btn-secondary")} onClick={()=>setPage("carte")}>🗺 Voir sur carte</button>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <button className={"btn btn-sm "+(i===0?"btn-primary":"btn-secondary")} onClick={()=>setPage("carte")}>🗺 Carte</button>
+                  {r.tel&&<AppelButton tel={r.tel} size="sm"/>}
+                </div>
                 </div>
               </div>
             ))}
@@ -709,8 +861,8 @@ export default function App() {
   const handleAuth=u=>{setUser(u);setRole("pharmacie");setPage("dashboard");};
   const handleLogout=async()=>{await getAuth().signOut();setUser(null);setRole("patient");setPage("accueil");setStock([]);};
   if(!fbReady||!authChecked)return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh"}}><div className="loading"><div className="spinner"></div> Chargement Mediconline...</div></div>;
-  const TABS_PATIENT=[{id:"accueil",label:"🏠 Accueil"},{id:"carte",label:"🗺 Carte"},{id:"resultats",label:"🔍 Recherche"}];
-  const TABS_PH=[{id:"dashboard",label:"📊 Dashboard"},{id:"stock",label:"📦 Stock"},{id:"ajouter",label:"➕ Ajouter"},{id:"carte",label:"🗺 Carte"},{id:"profil",label:"⚙️ Profil"}];
+  const TABS_PATIENT=[{id:"accueil",label:"🏠 Accueil"},{id:"carte",label:"🗺 Carte"},{id:"garde",label:"🌙 Garde"},{id:"resultats",label:"🔍 Recherche"}];
+  const TABS_PH=[{id:"dashboard",label:"📊 Dashboard"},{id:"stock",label:"📦 Stock"},{id:"ajouter",label:"➕ Ajouter"},{id:"carte",label:"🗺 Carte"},{id:"garde",label:"🌙 Garde"},{id:"profil",label:"⚙️ Profil"}];
   const tabs=role==="patient"?TABS_PATIENT:TABS_PH;
   return(
     <div className="app">
@@ -718,12 +870,14 @@ export default function App() {
       <div className="tabs">{tabs.map(t=><div key={t.id} className={"tab"+(page===t.id?" active":"")} onClick={()=>setPage(t.id)}>{t.label}</div>)}</div>
       {role==="patient"&&page==="accueil"   &&<AccueilPatient setPage={setPage} setRecherche={setRecherche}/>}
       {role==="patient"&&page==="carte"     &&<PageCarte/>}
+      {role==="patient"&&page==="garde"     &&<PageGarde setPage={setPage}/>}
       {role==="patient"&&page==="resultats" &&<ResultatsPatient recherche={recherche||"Paracétamol"} setPage={setPage}/>}
       {role==="pharmacie"&&!user            &&<AuthScreen onAuth={handleAuth}/>}
       {role==="pharmacie"&&user&&page==="dashboard"&&<Dashboard stock={stock} setPage={setPage} user={user}/>}
       {role==="pharmacie"&&user&&page==="stock"    &&<GestionStock stock={stock} user={user} setPage={setPage}/>}
       {role==="pharmacie"&&user&&page==="ajouter"  &&<AjouterMedicament user={user} setPage={setPage}/>}
       {role==="pharmacie"&&user&&page==="carte"    &&<PageCarte/>}
+      {role==="pharmacie"&&user&&page==="garde"    &&<PageGarde setPage={setPage}/>}
       {role==="pharmacie"&&user&&page==="profil"   &&<ProfilPharmacie user={user}/>}
     </div>
   );
