@@ -1684,17 +1684,60 @@ function ProfilPharmacie({ user }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 🔝 TOPBAR
 // ══════════════════════════════════════════════════════════════════════════════
+function usePWAInstall() {
+  const [prompt,setPrompt]=useState(null);
+  const [installed,setInstalled]=useState(false);
+  useEffect(()=>{
+    if(window.matchMedia("(display-mode: standalone)").matches){setInstalled(true);return;}
+    const handler=(e)=>{e.preventDefault();setPrompt(e);};
+    window.addEventListener("beforeinstallprompt",handler);
+    window.addEventListener("appinstalled",()=>{setInstalled(true);setPrompt(null);});
+    return()=>window.removeEventListener("beforeinstallprompt",handler);
+  },[]);
+  const install=async()=>{
+    if(!prompt)return;
+    prompt.prompt();
+    const{outcome}=await prompt.userChoice;
+    if(outcome==="accepted")setInstalled(true);
+    setPrompt(null);
+  };
+  return{prompt,installed,install};
+}
+
 function Topbar({ role, setRole, setPage, user, onLogout, onAdminOpen }) {
   const [clicks,setClicks]=useState(0);
+  const {prompt,installed,install}=usePWAInstall();
   const handleLogoClick=()=>{ const n=clicks+1; setClicks(n); if(n>=5){onAdminOpen();setClicks(0);} setTimeout(()=>setClicks(0),3000); };
   return(
+    <>
     <div className="topbar">
       <div className="topbar-logo" onClick={handleLogoClick} style={{cursor:"pointer"}}>Medic<span>online</span><span style={{fontSize:"0.6rem",color:"rgba(255,255,255,0.35)",fontFamily:"Mulish",fontWeight:400,marginLeft:8}}>📍 Yaoundé</span>{clicks>0&&clicks<5&&<span style={{fontSize:"0.55rem",marginLeft:6,opacity:0.5}}>{clicks}/5</span>}</div>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        {prompt&&!installed&&(
+          <button onClick={install} style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.3)",color:"white",padding:"5px 12px",borderRadius:99,fontSize:"0.75rem",cursor:"pointer",fontFamily:"Mulish",fontWeight:600,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
+            📲 Installer l'app
+          </button>
+        )}
+        {installed&&<span style={{fontSize:"0.7rem",color:"rgba(255,255,255,0.45)"}}>✅ Installée</span>}
         {!user&&<div className="role-switch"><button className={"role-btn"+(role==="patient"?" active":"")} onClick={()=>{setRole("patient");setPage("accueil");}}>👤 Patient</button><button className={"role-btn"+(role==="pharmacie"?" active":"")} onClick={()=>{setRole("pharmacie");setPage("dashboard");}}>🏥 Pharmacie</button></div>}
         {user&&<div style={{display:"flex",alignItems:"center",gap:10}}><span style={{color:"rgba(255,255,255,0.7)",fontSize:"0.78rem"}}>🏥 {user.nomPharmacie||user.email}</span><button className="btn btn-secondary btn-sm" onClick={onLogout}>Déconnexion</button></div>}
       </div>
     </div>
+    {prompt&&!installed&&(
+      <div style={{background:"#0A7B6C",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:"1.5rem"}}>📱</span>
+          <div>
+            <div style={{color:"white",fontWeight:700,fontSize:"0.85rem",fontFamily:"Mulish"}}>Installer Mediconline sur votre téléphone</div>
+            <div style={{color:"rgba(255,255,255,0.75)",fontSize:"0.72rem",fontFamily:"Mulish"}}>Accès rapide · Fonctionne hors ligne · Gratuit</div>
+          </div>
+        </div>
+        <button onClick={install} style={{background:"white",color:"#0A7B6C",border:"none",padding:"8px 18px",borderRadius:99,fontWeight:700,cursor:"pointer",fontSize:"0.82rem",whiteSpace:"nowrap",fontFamily:"Mulish"}}>
+          Installer
+        </button>
+      </div>
+    )}
+    </>
   );
 }
 
