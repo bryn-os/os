@@ -1138,42 +1138,266 @@ function GestionStock({ stock, user, setPage }) {
 // ➕ AJOUTER MÉDICAMENT — avec catalogue suggéré
 // ══════════════════════════════════════════════════════════════════════════════
 function AjouterMedicament({ user, setPage }) {
+  const [onglet,setOnglet]=useState("manuel"); // "manuel" | "excel" | "catalogue"
   const [form,setForm]=useState({nom:"",cat:"",prix:"",qte:"",exp:""});
-  const [suggestions,setSuggestions]=useState([]); const [success,setSuccess]=useState(false);
+  const [suggestions,setSuggestions]=useState([]);
+  const [success,setSuccess]=useState(false);
+  const [importLog,setImportLog]=useState([]);
+  const [importing,setImporting]=useState(false);
+  const [importDone,setImportDone]=useState(false);
+  const [catFilter,setCatFilter]=useState("Tous");
+  const [catalogueSel,setCatalogueSel]=useState([]);
+  const [catPrix,setCatPrix]=useState({});
+
   const setF=(k,v)=>setForm(f=>({...f,[k]:v}));
   const handleNomInput=v=>{setF("nom",v);setSuggestions(v.length>1?CATALOGUE_MEDICAMENTS.filter(m=>m.nom.toLowerCase().includes(v.toLowerCase())).slice(0,6):[]);};
   const selectSuggestion=m=>{setForm({nom:m.nom,cat:m.cat,prix:String(m.prixRef),qte:"",exp:""});setSuggestions([]);};
+
+  // ── Ajout manuel
   const enregistrer=async()=>{
     if(!form.nom||!form.prix||!form.qte){alert("Champs obligatoires manquants.");return;}
     await getDB().ref("stock/"+user.uid).push({nom:form.nom,cat:form.cat||"Autre",prix:Number(form.prix),qte:Number(form.qte),exp:form.exp||"N/A",pharmacieId:user.uid,pharmacieNom:user.nomPharmacie||"Ma Pharmacie",updatedAt:Date.now()});
     setSuccess(true); setTimeout(()=>{setSuccess(false);setPage("stock");},1500);
   };
+
+  // ── Import Excel/CSV
+  const handleFile=async(e)=>{
+    const file=e.target.files[0]; if(!file)return;
+    setImporting(true); setImportLog([]); setImportDone(false);
+    const ext=file.name.split(".").pop().toLowerCase();
+    const reader=new FileReader();
+    reader.onload=async(ev)=>{
+      try{
+        let rows=[];
+        if(ext==="csv"){
+          // Parse CSV
+          const text=ev.target.result;
+          const lines=text.split("
+").filter(l=>l.trim());
+          const headers=lines[0].split(/[,;]/).map(h=>h.trim().toLowerCase().replace(/['"]/g,""));
+          rows=lines.slice(1).map(line=>{
+            const vals=line.split(/[,;]/).map(v=>v.trim().replace(/['"]/g,""));
+            const obj={};
+            headers.forEach((h,i)=>obj[h]=vals[i]||"");
+            return obj;
+          }).filter(r=>r[headers[0]]);
+        } else {
+          // Parse XLSX avec SheetJS (si dispo) sinon simuler
+          setImportLog(["⚠️ Pour Excel .xlsx, utilisez le format CSV. Exportez depuis Excel : Fichier → Enregistrer sous → CSV"]);
+          setImporting(false);
+          return;
+        }
+
+        // Colonnes acceptées : nom/désignation/medicament, prix/price, quantite/qte/stock, categorie/cat
+        const findCol=(obj,keys)=>{ for(const k of keys){ const found=Object.keys(obj).find(h=>keys.some(kk=>h.includes(kk))); if(found)return obj[found]; } return ""; };
+        
+        let ok=0, ignored=0;
+        const logs=[];
+        for(const row of rows){
+          const keys=Object.keys(row);
+          const nom=(row["nom"]||row["designation"]||row["désignation"]||row["medicament"]||row["médicament"]||row[keys[0]]||"").trim();
+          const prixRaw=(row["prix"]||row["price"]||row["tarif"]||row[keys[1]]||"").toString().replace(/[^\d]/g,"");
+          const qteRaw=(row["qte"]||row["quantite"]||row["quantité"]||row["stock"]||row[keys[2]]||"").toString().replace(/[^\d]/g,"");
+          const cat=row["categorie"]||row["catégorie"]||row["cat"]||"Autre";
+          const exp=row["expiration"]||row["exp"]||row["date_expiration"]||"N/A";
+          
+          if(!nom||!prixRaw){ignored++;logs.push("⚠️ Ignoré (données manquantes): "+JSON.stringify(row));continue;}
+          
+          const prix=Number(prixRaw)||0;
+          const qte=Number(qteRaw)||0;
+
+          // Matcher avec catalogue officiel
+          const match=CATALOGUE_MEDICAMENTS.find(m=>m.nom.toLowerCase().includes(nom.toLowerCase())||nom.toLowerCase().includes(m.nom.toLowerCase().split(" ")[0]));
+          
+          await getDB().ref("stock/"+user.uid).push({
+            nom: match?match.nom:nom,
+            cat: match?match.cat:cat,
+            prix, qte,
+            exp: exp||"N/A",
+            pharmacieId:user.uid,
+            pharmacieNom:user.nomPharmacie||"Ma Pharmacie",
+            updatedAt:Date.now()
+          });
+          ok++;
+          logs.push("✅ Importé : "+nom+" — "+prix+" FCFA — Qté: "+qte);
+        }
+        logs.unshift("📊 Résultat : "+ok+" médicaments importés, "+ignored+" ignorés");
+        setImportLog(logs);
+        setImportDone(true);
+        setImporting(false);
+      }catch(err){
+        setImportLog(["❌ Erreur : "+err.message]);
+        setImporting(false);
+      }
+    };
+    if(ext==="csv") reader.readAsText(file, "UTF-8");
+    else reader.readAsArrayBuffer(file);
+  };
+
+  // ── Import depuis catalogue officiel (sélection multiple)
+  const toggleSel=(id)=>setCatalogueSel(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+  const importerSelection=async()=>{
+    if(catalogueSel.length===0){alert("Sélectionnez au moins un médicament.");return;}
+    setImporting(true);
+    for(const id of catalogueSel){
+      const m=CATALOGUE_MEDICAMENTS.find(x=>x.id===id);
+      if(!m)continue;
+      const prix=Number(catPrix[id])||m.prixRef;
+      await getDB().ref("stock/"+user.uid).push({
+        nom:m.nom, cat:m.cat, prix, qte:0, exp:"N/A",
+        pharmacieId:user.uid, pharmacieNom:user.nomPharmacie||"Ma Pharmacie", updatedAt:Date.now()
+      });
+    }
+    setImporting(false);
+    setImportDone(true);
+    setImportLog(["✅ "+catalogueSel.length+" médicaments ajoutés ! Allez dans Gestion du Stock pour mettre à jour les quantités."]);
+  };
+
+  const catMeds=catFilter==="Tous"?CATALOGUE_MEDICAMENTS:CATALOGUE_MEDICAMENTS.filter(m=>m.cat===catFilter);
+
   return(
     <div className="main">
-      <div className="page-toprow mb20"><button className="btn btn-secondary btn-sm" onClick={()=>setPage("stock")}>← Retour</button><div className="page-title">Ajouter un médicament</div></div>
-      {success&&<div className="alert alert-success mb16"><span className="alert-ico">✅</span><span>Ajouté sur Firebase !</span></div>}
-      <div className="card form-card">
-        <div className="alert alert-success mb16" style={{background:"#EBF4FF",borderColor:"var(--navy-mid)",color:"var(--navy)"}}>
-          <span className="alert-ico">💡</span><span>Tapez le nom du médicament — notre base de {CATALOGUE_MEDICAMENTS.length}+ médicaments camerounais vous suggère automatiquement !</span>
+      <div className="page-toprow mb20">
+        <button className="btn btn-secondary btn-sm" onClick={()=>setPage("stock")}>← Retour</button>
+        <div className="page-title">Ajouter des médicaments</div>
+      </div>
+
+      {/* Onglets */}
+      <div className="auth-tabs mb20" style={{marginBottom:20}}>
+        <div className={"auth-tab"+(onglet==="catalogue"?" active":"")} onClick={()=>setOnglet("catalogue")}>📋 Depuis le catalogue</div>
+        <div className={"auth-tab"+(onglet==="excel"?" active":"")} onClick={()=>setOnglet("excel")}>📂 Importer CSV/Excel</div>
+        <div className={"auth-tab"+(onglet==="manuel"?" active":"")} onClick={()=>setOnglet("manuel")}>✏️ Manuel</div>
+      </div>
+
+      {/* ══ ONGLET CATALOGUE ══ */}
+      {onglet==="catalogue"&&(
+        <div className="card">
+          <div className="alert mb16" style={{background:"#EBF4FF",borderColor:"#B0C8E8",color:"var(--navy)"}}>
+            <span className="alert-ico">💡</span>
+            <span><strong>Sélectionnez vos médicaments</strong> depuis le catalogue officiel du Cameroun ({CATALOGUE_MEDICAMENTS.length} médicaments). Entrez votre prix pour chacun.</span>
+          </div>
+          <div className="chips mb16">
+            {["Tous",...new Set(CATALOGUE_MEDICAMENTS.map(m=>m.cat))].map(c=>(
+              <span key={c} className={"chip"+(catFilter===c?" active":"")} onClick={()=>setCatFilter(c)}>{c}</span>
+            ))}
+          </div>
+          <div style={{marginBottom:12,color:"var(--grey-text)",fontSize:"0.82rem"}}>
+            {catalogueSel.length} sélectionné(s) · {catMeds.length} médicaments affichés
+          </div>
+          <div style={{maxHeight:"400px",overflowY:"auto",border:"1px solid var(--grey-border)",borderRadius:10}}>
+            {catMeds.map(m=>{
+              const sel=catalogueSel.includes(m.id);
+              return(
+                <div key={m.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid var(--grey-border)",background:sel?"#E6FAF0":"white",cursor:"pointer"}}
+                  onClick={()=>toggleSel(m.id)}>
+                  <input type="checkbox" checked={sel} onChange={()=>toggleSel(m.id)} style={{width:16,height:16,cursor:"pointer"}}/>
+                  <span style={{fontSize:"1.1rem"}}>{m.emoji}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:"0.82rem",fontWeight:600,color:"var(--navy)"}}>{m.nom}</div>
+                    <div style={{fontSize:"0.72rem",color:"var(--grey-text)"}}>{m.cat}</div>
+                  </div>
+                  {sel&&(
+                    <input
+                      type="number"
+                      placeholder={"Prix (réf: "+m.prixRef+" F)"}
+                      value={catPrix[m.id]||""}
+                      onChange={e=>{e.stopPropagation();setCatPrix(p=>({...p,[m.id]:e.target.value}));}}
+                      onClick={e=>e.stopPropagation()}
+                      className="form-input"
+                      style={{width:130,padding:"4px 8px",fontSize:"0.78rem"}}
+                    />
+                  )}
+                  {!sel&&<span style={{fontSize:"0.75rem",color:"var(--teal)",fontWeight:600,whiteSpace:"nowrap"}}>~{m.prixRef} F</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{marginTop:16,display:"flex",gap:12,flexWrap:"wrap"}}>
+            <button className="btn btn-secondary btn-sm" onClick={()=>setCatalogueSel(catMeds.map(m=>m.id))}>Tout sélectionner</button>
+            <button className="btn btn-secondary btn-sm" onClick={()=>setCatalogueSel([])}>Tout désélectionner</button>
+            <button className="btn btn-primary" style={{marginLeft:"auto"}} onClick={importerSelection} disabled={importing||catalogueSel.length===0}>
+              {importing?"⏳ Import en cours...":"✅ Ajouter les "+catalogueSel.length+" sélectionnés"}
+            </button>
+          </div>
+          {importDone&&<div className="alert alert-success mt16"><span className="alert-ico">🎉</span><span>{importLog[0]}</span></div>}
         </div>
-        <div className="form-group" style={{position:"relative"}}>
-          <label className="form-label">Nom du médicament *</label>
-          <input className="form-input" placeholder="ex: Coartem, Amoxicilline, Insuline..." value={form.nom} onChange={e=>handleNomInput(e.target.value)}/>
-          {suggestions.length>0&&<div className="suggestions" style={{position:"absolute",top:"100%",left:0,right:0,zIndex:100}}>
-            {suggestions.map(s=><div key={s.id} className="suggestion-item" onClick={()=>selectSuggestion(s)}>
-              <span>{s.emoji}</span><span style={{flex:1,fontSize:"0.82rem"}}>{s.nom}</span><span className="tag tag-blue">{s.cat}</span><span style={{fontSize:"0.72rem",color:"var(--teal)",fontWeight:700}}>~{s.prixRef} F</span>
-            </div>)}
+      )}
+
+      {/* ══ ONGLET CSV/EXCEL ══ */}
+      {onglet==="excel"&&(
+        <div className="card">
+          <div className="alert mb16" style={{background:"#E6FAF0",borderColor:"var(--teal)",color:"var(--navy)"}}>
+            <span className="alert-ico">📊</span>
+            <span><strong>Importation automatique</strong> — Téléversez votre fichier CSV. Tous vos médicaments sont importés en une seule fois !</span>
+          </div>
+
+          {/* Format attendu */}
+          <div className="card mb16" style={{background:"#F4F6F8",border:"none"}}>
+            <div style={{fontWeight:700,marginBottom:8,fontSize:"0.85rem",color:"var(--navy)"}}>📋 Format CSV attendu :</div>
+            <div style={{fontFamily:"monospace",fontSize:"0.78rem",background:"white",padding:10,borderRadius:8,border:"1px solid var(--grey-border)",overflowX:"auto"}}>
+              <div style={{color:"var(--teal)",fontWeight:700}}>nom,prix,qte,categorie,expiration</div>
+              <div>Paracétamol 500mg,50,150,Antidouleur,2027-06-01</div>
+              <div>Amoxicilline 250mg,900,30,Antibiotique,2026-08-15</div>
+              <div>Coartem 20/120mg,2500,20,Antipaludéen,2027-01-20</div>
+              <div>Metformine 500mg,500,50,Diabète,2027-05-01</div>
+            </div>
+            <div style={{fontSize:"0.75rem",color:"var(--grey-text)",marginTop:8}}>
+              💡 Depuis Excel : <strong>Fichier → Enregistrer sous → CSV (séparateur: virgule)</strong>
+            </div>
+          </div>
+
+          <div style={{border:"2px dashed var(--teal)",borderRadius:12,padding:"32px",textAlign:"center",background:"#F4FBF9"}}>
+            <div style={{fontSize:"2.5rem",marginBottom:8}}>📂</div>
+            <div style={{fontWeight:700,color:"var(--navy)",marginBottom:4}}>Glissez votre fichier CSV ici</div>
+            <div style={{fontSize:"0.82rem",color:"var(--grey-text)",marginBottom:16}}>ou cliquez pour sélectionner</div>
+            <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFile} style={{display:"none"}} id="file-input"/>
+            <label htmlFor="file-input" className="btn btn-primary" style={{cursor:"pointer",display:"inline-block"}}>
+              {importing?"⏳ Import en cours...":"📂 Choisir le fichier"}
+            </label>
+          </div>
+
+          {importLog.length>0&&(
+            <div style={{marginTop:16,maxHeight:200,overflowY:"auto",fontFamily:"monospace",fontSize:"0.75rem",background:"#F4F6F8",padding:12,borderRadius:8}}>
+              {importLog.map((l,i)=>(
+                <div key={i} style={{color:l.startsWith("✅")?"#2DC653":l.startsWith("⚠️")?"#F4A261":l.startsWith("❌")?"var(--red)":"var(--navy)",marginBottom:4}}>{l}</div>
+              ))}
+            </div>
+          )}
+          {importDone&&<div style={{marginTop:12,display:"flex",gap:12}}>
+            <button className="btn btn-primary" onClick={()=>setPage("stock")}>📦 Voir mon stock</button>
+            <button className="btn btn-secondary" onClick={()=>{setImportLog([]);setImportDone(false);}}>Importer un autre fichier</button>
           </div>}
         </div>
-        <div className="form-group"><label className="form-label">Catégorie</label><select className="form-input" value={form.cat} onChange={e=>setF("cat",e.target.value)}><option value="">Sélectionner...</option>{CATEGORIES_CATALOGUE.filter(c=>c!=="Tous").map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-        <div className="grid-2">
-          <div className="form-group"><label className="form-label">Votre prix de vente (FCFA) *</label><input className="form-input" type="number" value={form.prix} onChange={e=>setF("prix",e.target.value)}/></div>
-          <div className="form-group"><label className="form-label">Quantité en stock *</label><input className="form-input" type="number" value={form.qte} onChange={e=>setF("qte",e.target.value)}/></div>
+      )}
+
+      {/* ══ ONGLET MANUEL ══ */}
+      {onglet==="manuel"&&(
+        <div className="card form-card">
+          {success&&<div className="alert alert-success mb16"><span className="alert-ico">✅</span><span>Ajouté !</span></div>}
+          <div className="form-group" style={{position:"relative"}}>
+            <label className="form-label">Nom du médicament *</label>
+            <input className="form-input" placeholder="ex: Coartem, Amoxicilline..." value={form.nom} onChange={e=>handleNomInput(e.target.value)}/>
+            {suggestions.length>0&&<div className="suggestions" style={{position:"absolute",top:"100%",left:0,right:0,zIndex:100}}>
+              {suggestions.map(s=><div key={s.id} className="suggestion-item" onClick={()=>selectSuggestion(s)}>
+                <span>{s.emoji}</span><span style={{flex:1,fontSize:"0.82rem"}}>{s.nom}</span><span className="tag tag-blue">{s.cat}</span><span style={{fontSize:"0.72rem",color:"var(--teal)",fontWeight:700}}>~{s.prixRef} F</span>
+              </div>)}
+            </div>}
+          </div>
+          <div className="form-group"><label className="form-label">Catégorie</label>
+            <select className="form-input" value={form.cat} onChange={e=>setF("cat",e.target.value)}>
+              <option value="">Sélectionner...</option>
+              {CATEGORIES_CATALOGUE.filter(c=>c!=="Tous").map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="grid-2">
+            <div className="form-group"><label className="form-label">Prix de vente (FCFA) *</label><input className="form-input" type="number" value={form.prix} onChange={e=>setF("prix",e.target.value)}/></div>
+            <div className="form-group"><label className="form-label">Quantité en stock *</label><input className="form-input" type="number" value={form.qte} onChange={e=>setF("qte",e.target.value)}/></div>
+          </div>
+          <div className="form-group"><label className="form-label">Date d'expiration</label><input className="form-input" type="date" value={form.exp} onChange={e=>setF("exp",e.target.value)}/></div>
+          <hr className="divider"/>
+          <button className="btn btn-primary btn-full" onClick={enregistrer}>✅ Publier sur Mediconline</button>
         </div>
-        <div className="form-group"><label className="form-label">Date d'expiration</label><input className="form-input" type="date" value={form.exp} onChange={e=>setF("exp",e.target.value)}/></div>
-        <hr className="divider"/>
-        <button className="btn btn-primary btn-full" onClick={enregistrer}>✅ Publier sur Mediconline</button>
-      </div>
+      )}
     </div>
   );
 }
