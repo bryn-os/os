@@ -1451,8 +1451,8 @@ function AjouterMedicament({ user, setPage }) {
         for(const row of rows){
           const keys=Object.keys(row);
           const nom=(row["nom"]||row["designation"]||row["désignation"]||row["medicament"]||row["médicament"]||row[keys[0]]||"").trim();
-          const prixRaw=(row["prix"]||row["price"]||row["tarif"]||row[keys[1]]||"").toString().replace(/[^\d]/g,"");
-          const qteRaw=(row["qte"]||row["quantite"]||row["quantité"]||row["stock"]||row[keys[2]]||"").toString().replace(/[^\d]/g,"");
+          const prixRaw=(row["prix"]||row["price"]||row["tarif"]||row[keys[1]]||"").toString().replace(/[^0-9]/g,"");
+          const qteRaw=(row["qte"]||row["quantite"]||row["quantité"]||row["stock"]||row[keys[2]]||"").toString().replace(/[^0-9]/g,"");
           const cat=row["categorie"]||row["catégorie"]||row["cat"]||"Autre";
           const exp=row["expiration"]||row["exp"]||row["date_expiration"]||"N/A";
           
