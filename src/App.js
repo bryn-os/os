@@ -1685,110 +1685,88 @@ function ProfilPharmacie({ user }) {
 // 🔝 TOPBAR
 // ══════════════════════════════════════════════════════════════════════════════
 function usePWAInstall() {
-  const [prompt,setPrompt]=useState(()=>window.__pwaPrompt||null);
-  const [installed,setInstalled]=useState(()=>window.__pwaInstalled||false);
-
+  const [prompt,setPrompt]=useState(null);
+  const [installed,setInstalled]=useState(
+    ()=>window.matchMedia("(display-mode: standalone)").matches||
+        window.navigator.standalone===true
+  );
   useEffect(()=>{
-    // Récupérer le prompt déjà capturé dans index.html
-    if(window.__pwaPrompt) setPrompt(window.__pwaPrompt);
-    if(window.__pwaInstalled) setInstalled(true);
-
-    // Callback pour prompt futur
+    if(window.__pwaPrompt){setPrompt(window.__pwaPrompt);}
     window.__pwaPromptReady=(e)=>setPrompt(e);
-
-    // Écouter aussi en direct au cas où
-    const handler=(e)=>{e.preventDefault();setPrompt(e);window.__pwaPrompt=e;};
-    window.addEventListener("beforeinstallprompt",handler);
+    const h=(e)=>{e.preventDefault();setPrompt(e);window.__pwaPrompt=e;};
+    window.addEventListener("beforeinstallprompt",h);
     window.addEventListener("appinstalled",()=>{setInstalled(true);setPrompt(null);});
-    return()=>{
-      window.removeEventListener("beforeinstallprompt",handler);
-      delete window.__pwaPromptReady;
-    };
+    return()=>window.removeEventListener("beforeinstallprompt",h);
   },[]);
-
   const install=async()=>{
     const p=prompt||window.__pwaPrompt;
-    if(!p)return;
-    p.prompt();
-    const{outcome}=await p.userChoice;
-    if(outcome==="accepted"){setInstalled(true);window.__pwaInstalled=true;}
-    setPrompt(null);
-    window.__pwaPrompt=null;
+    if(p){p.prompt();const{outcome}=await p.userChoice;if(outcome==="accepted")setInstalled(true);setPrompt(null);}
   };
-
-  // Afficher le guide manuel si pas de prompt natif (iPhone ou Chrome strict)
-  const [showManual,setShowManual]=useState(false);
-  useEffect(()=>{
-    // Si après 3 secondes toujours pas de prompt → afficher guide manuel
-    const t=setTimeout(()=>{
-      if(!window.__pwaPrompt&&!window.__pwaInstalled) setShowManual(true);
-    },3000);
-    return()=>clearTimeout(t);
-  },[]);
-
-  return{prompt,installed,install,showManual,setShowManual};
+  return{prompt,installed,install};
 }
 
 function Topbar({ role, setRole, setPage, user, onLogout, onAdminOpen }) {
   const [clicks,setClicks]=useState(0);
-  const {prompt,installed,install,showManual,setShowManual}=usePWAInstall();
+  const {prompt,installed,install}=usePWAInstall();
   const handleLogoClick=()=>{ const n=clicks+1; setClicks(n); if(n>=5){onAdminOpen();setClicks(0);} setTimeout(()=>setClicks(0),3000); };
-  const isAndroid=/android/i.test(navigator.userAgent);
+  const [showGuide,setShowGuide]=useState(false);
   const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+
+  const handleInstallClick=async()=>{
+    if(prompt){await install();}
+    else{setShowGuide(g=>!g);}
+  };
 
   return(
     <>
     <div className="topbar">
-      <div className="topbar-logo" onClick={handleLogoClick} style={{cursor:"pointer"}}>Medic<span>online</span><span style={{fontSize:"0.6rem",color:"rgba(255,255,255,0.35)",fontFamily:"Mulish",fontWeight:400,marginLeft:8}}>📍 Yaoundé</span>{clicks>0&&clicks<5&&<span style={{fontSize:"0.55rem",marginLeft:6,opacity:0.5}}>{clicks}/5</span>}</div>
+      <div className="topbar-logo" onClick={handleLogoClick} style={{cursor:"pointer"}}>
+        Medic<span>online</span>
+        <span style={{fontSize:"0.6rem",color:"rgba(255,255,255,0.35)",fontFamily:"Mulish",fontWeight:400,marginLeft:8}}>📍 Yaoundé</span>
+        {clicks>0&&clicks<5&&<span style={{fontSize:"0.55rem",marginLeft:6,opacity:0.5}}>{clicks}/5</span>}
+      </div>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
-        {prompt&&!installed&&(
-          <button onClick={install} style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.3)",color:"white",padding:"5px 12px",borderRadius:99,fontSize:"0.75rem",cursor:"pointer",fontFamily:"Mulish",fontWeight:600,whiteSpace:"nowrap"}}>
-            📲 Installer l'app
-          </button>
+        {!installed&&(
+          <button onClick={handleInstallClick} style={{
+            background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.35)",
+            color:"white",padding:"5px 11px",borderRadius:99,fontSize:"0.72rem",
+            cursor:"pointer",fontFamily:"Mulish",fontWeight:700,whiteSpace:"nowrap",
+            display:"flex",alignItems:"center",gap:4
+          }}>📲 Installer</button>
         )}
-        {!prompt&&!installed&&(isAndroid||isIOS)&&(
-          <button onClick={()=>setShowManual(true)} style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.3)",color:"white",padding:"5px 12px",borderRadius:99,fontSize:"0.75rem",cursor:"pointer",fontFamily:"Mulish",fontWeight:600,whiteSpace:"nowrap"}}>
-            📲 Installer l'app
-          </button>
-        )}
-        {installed&&<span style={{fontSize:"0.7rem",color:"rgba(255,255,255,0.45)"}}>✅ App installée</span>}
-        {!user&&<div className="role-switch"><button className={"role-btn"+(role==="patient"?" active":"")} onClick={()=>{setRole("patient");setPage("accueil");}}>👤 Patient</button><button className={"role-btn"+(role==="pharmacie"?" active":"")} onClick={()=>{setRole("pharmacie");setPage("dashboard");}}>🏥 Pharmacie</button></div>}
-        {user&&<div style={{display:"flex",alignItems:"center",gap:10}}><span style={{color:"rgba(255,255,255,0.7)",fontSize:"0.78rem"}}>🏥 {user.nomPharmacie||user.email}</span><button className="btn btn-secondary btn-sm" onClick={onLogout}>Déconnexion</button></div>}
+        {installed&&<span style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.4)"}}>✅ Installée</span>}
+        {!user&&<div className="role-switch">
+          <button className={"role-btn"+(role==="patient"?" active":"")} onClick={()=>{setRole("patient");setPage("accueil");}}>👤 Patient</button>
+          <button className={"role-btn"+(role==="pharmacie"?" active":"")} onClick={()=>{setRole("pharmacie");setPage("dashboard");}}>🏥 Pharmacie</button>
+        </div>}
+        {user&&<div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{color:"rgba(255,255,255,0.7)",fontSize:"0.78rem"}}>🏥 {user.nomPharmacie||user.email}</span>
+          <button className="btn btn-secondary btn-sm" onClick={onLogout}>Déconnexion</button>
+        </div>}
       </div>
     </div>
 
-    {/* Bannière Android — prompt natif */}
-    {prompt&&!installed&&(
-      <div style={{background:"#0A7B6C",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:"1.5rem"}}>📱</span>
-          <div>
-            <div style={{color:"white",fontWeight:700,fontSize:"0.85rem",fontFamily:"Mulish"}}>Installer Mediconline sur votre téléphone</div>
-            <div style={{color:"rgba(255,255,255,0.75)",fontSize:"0.72rem",fontFamily:"Mulish"}}>Accès rapide · Fonctionne hors ligne · Gratuit</div>
-          </div>
-        </div>
-        <button onClick={install} style={{background:"white",color:"#0A7B6C",border:"none",padding:"8px 18px",borderRadius:99,fontWeight:700,cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish"}}>Installer</button>
-      </div>
-    )}
-
-    {/* Guide manuel — iPhone ou Android sans prompt */}
-    {showManual&&!installed&&(
-      <div style={{background:"#0D2B3E",padding:"16px",borderBottom:"2px solid #0A7B6C",position:"relative"}}>
-        <button onClick={()=>setShowManual(false)} style={{position:"absolute",top:10,right:12,background:"none",border:"none",color:"rgba(255,255,255,0.5)",fontSize:"1.2rem",cursor:"pointer"}}>✕</button>
-        <div style={{color:"white",fontWeight:700,fontSize:"0.9rem",fontFamily:"Mulish",marginBottom:10}}>📱 Installer Mediconline sur votre téléphone</div>
+    {/* Guide d'installation — toujours disponible */}
+    {showGuide&&!installed&&(
+      <div style={{background:"#0D2B3E",padding:"16px 20px",borderBottom:"3px solid #0A7B6C",position:"relative",zIndex:50}}>
+        <button onClick={()=>setShowGuide(false)} style={{position:"absolute",top:10,right:14,background:"none",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"1.3rem",cursor:"pointer",lineHeight:1}}>✕</button>
+        <div style={{color:"white",fontWeight:800,fontSize:"0.95rem",fontFamily:"Syne",marginBottom:12}}>📱 Installer Mediconline en 3 secondes</div>
         {isIOS?(
-          <div style={{color:"rgba(255,255,255,0.85)",fontSize:"0.8rem",fontFamily:"Mulish",lineHeight:1.7}}>
-            <div>1️⃣ Appuyez sur <strong style={{color:"#0A7B6C"}}>le bouton Partager</strong> en bas de Safari <span style={{fontSize:"1.1rem"}}>⬆️</span></div>
-            <div>2️⃣ Faites défiler et appuyez sur <strong style={{color:"#0A7B6C"}}>"Sur l'écran d'accueil"</strong></div>
-            <div>3️⃣ Appuyez sur <strong style={{color:"#0A7B6C"}}>"Ajouter"</strong> en haut à droite</div>
-            <div style={{marginTop:8,opacity:0.6,fontSize:"0.72rem"}}>⚠️ Fonctionne uniquement avec Safari, pas Chrome sur iPhone</div>
+          <div style={{color:"rgba(255,255,255,0.9)",fontSize:"0.82rem",fontFamily:"Mulish",lineHeight:2}}>
+            <div>1️⃣ Ouvre ce site dans <strong style={{color:"#4DB8FF"}}>Safari</strong> (pas Chrome)</div>
+            <div>2️⃣ Appuie sur <strong style={{color:"#0A7B6C"}}>le bouton Partager ⬆️</strong> en bas</div>
+            <div>3️⃣ Appuie sur <strong style={{color:"#0A7B6C"}}>"Sur l'écran d'accueil"</strong></div>
+            <div>4️⃣ Appuie sur <strong style={{color:"#0A7B6C"}}>"Ajouter"</strong> ✅</div>
           </div>
         ):(
-          <div style={{color:"rgba(255,255,255,0.85)",fontSize:"0.8rem",fontFamily:"Mulish",lineHeight:1.7}}>
-            <div>1️⃣ Appuyez sur les <strong style={{color:"#0A7B6C"}}>3 points ⋮</strong> en haut à droite de Chrome</div>
-            <div>2️⃣ Appuyez sur <strong style={{color:"#0A7B6C"}}>"Ajouter à l'écran d'accueil"</strong></div>
-            <div>3️⃣ Appuyez sur <strong style={{color:"#0A7B6C"}}>"Ajouter"</strong> pour confirmer</div>
-            <div style={{marginTop:8,opacity:0.6,fontSize:"0.72rem"}}>⚠️ Si l'option n'apparaît pas, ouvrez le site dans Chrome (pas Samsung Browser)</div>
+          <div style={{color:"rgba(255,255,255,0.9)",fontSize:"0.82rem",fontFamily:"Mulish",lineHeight:2}}>
+            <div>1️⃣ Ouvre ce site dans <strong style={{color:"#4DB8FF"}}>Google Chrome</strong></div>
+            <div>2️⃣ Appuie sur les <strong style={{color:"#0A7B6C"}}>3 points ⋮</strong> en haut à droite</div>
+            <div>3️⃣ Appuie sur <strong style={{color:"#0A7B6C"}}>"Ajouter à l'écran d'accueil"</strong></div>
+            <div>4️⃣ Appuie sur <strong style={{color:"#0A7B6C"}}>"Ajouter"</strong> ✅</div>
+            <div style={{marginTop:8,padding:"8px 12px",background:"rgba(255,255,255,0.08)",borderRadius:8,fontSize:"0.75rem",color:"rgba(255,255,255,0.6)"}}>
+              💡 Tu utilises Samsung Browser ? L'option s'appelle <strong>"Ajouter page à"</strong> → "Écran d'accueil"
+            </div>
           </div>
         )}
       </div>
