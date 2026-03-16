@@ -1,6 +1,118 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎭 MODE DÉMO OFFLINE
+// Active avec le bouton "Démo" dans la barre du haut
+// Fonctionne sans internet — parfait pour présenter aux pharmacies
+// ══════════════════════════════════════════════════════════════════════════════
+const DEMO_PHARMACIES_OFFLINE = [
+  { id:"ph1", nom:"Pharmacie Bastos",      quartier:"Bastos",       adresse:"Rue 1825, Bastos",         tel:"222-209-301", ouvert:true,  lat:3.8820, lng:11.5050 },
+  { id:"ph2", nom:"Pharmacie du Centre",   quartier:"Centre-ville", adresse:"Av. Kennedy, Centre-ville",tel:"222-221-450", ouvert:true,  lat:3.8667, lng:11.5167 },
+  { id:"ph3", nom:"Pharmacie Obili",       quartier:"Obili",        adresse:"Carrefour Obili",           tel:"222-315-780", ouvert:true,  lat:3.8550, lng:11.5080 },
+  { id:"ph4", nom:"Pharmacie Biyem-Assi",  quartier:"Biyem-Assi",   adresse:"Marché Biyem-Assi",         tel:"222-303-112", ouvert:true,  lat:3.8450, lng:11.4980 },
+  { id:"ph5", nom:"Pharmacie Essos",       quartier:"Essos",        adresse:"Carrefour Essos",           tel:"222-280-654", ouvert:false, lat:3.8710, lng:11.5350 },
+  { id:"ph6", nom:"Pharmacie Nlongkak",    quartier:"Nlongkak",     adresse:"Nlongkak, face école",      tel:"222-231-999", ouvert:true,  lat:3.8780, lng:11.5220 },
+  { id:"ph7", nom:"Pharmacie Melen",       quartier:"Melen",        adresse:"Rue Melen, Yaoundé",        tel:"222-340-800", ouvert:true,  lat:3.8620, lng:11.5290 },
+  { id:"ph8", nom:"Pharmacie Mvog-Ada",    quartier:"Mvog-Ada",     adresse:"Av. Mvog-Ada",              tel:"222-355-240", ouvert:true,  lat:3.8480, lng:11.5280 },
+];
+
+const DEMO_STOCK_OFFLINE = {
+  "ph1": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:50,   qte:200, credibilite:98 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2800, qte:15,  credibilite:97 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:950,  qte:30,  credibilite:95 },
+    { nom:"Quinine 300mg comprimés",                       cat:"Antipaludéen",  prix:400,  qte:60,  credibilite:96 },
+    { nom:"Ibuprofène 400mg",                              cat:"Antidouleur",   prix:350,  qte:80,  credibilite:99 },
+    { nom:"Metformine 500mg",                              cat:"Diabète",       prix:600,  qte:50,  credibilite:94 },
+    { nom:"Amlodipine 5mg",                                cat:"Cardio",        prix:700,  qte:25,  credibilite:93 },
+    { nom:"Oméprazole 20mg",                               cat:"Gastro",        prix:450,  qte:35,  credibilite:97 },
+    { nom:"Insuline Actrapid 100UI/ml",                    cat:"Diabète",       prix:5500, qte:5,   credibilite:92 },
+  ],
+  "ph2": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:45,   qte:300, credibilite:99 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2500, qte:25,  credibilite:96 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:800,  qte:50,  credibilite:98 },
+    { nom:"Quinine 300mg comprimés",                       cat:"Antipaludéen",  prix:350,  qte:100, credibilite:97 },
+    { nom:"Ciprofloxacine 500mg",                          cat:"Antibiotique",  prix:1600, qte:20,  credibilite:95 },
+    { nom:"Cotrimoxazole (TMP/SMX) 480mg",                 cat:"Antibiotique",  prix:150,  qte:120, credibilite:99 },
+    { nom:"Amlodipine 5mg",                                cat:"Cardio",        prix:650,  qte:40,  credibilite:96 },
+    { nom:"Ceftriaxone injectable 1g",                     cat:"Antibiotique",  prix:2800, qte:12,  credibilite:94 },
+    { nom:"Oméprazole 20mg",                               cat:"Gastro",        prix:400,  qte:45,  credibilite:98 },
+  ],
+  "ph3": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:50,   qte:150, credibilite:95 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2600, qte:18,  credibilite:94 },
+    { nom:"Amoxicilline 500mg gélules",                    cat:"Antibiotique",  prix:1300, qte:25,  credibilite:93 },
+    { nom:"Quinine 300mg comprimés",                       cat:"Antipaludéen",  prix:300,  qte:70,  credibilite:97 },
+    { nom:"Ibuprofène 200mg",                              cat:"Antidouleur",   prix:200,  qte:90,  credibilite:96 },
+    { nom:"Metformine 500mg",                              cat:"Diabète",       prix:550,  qte:35,  credibilite:92 },
+    { nom:"Fer + Acide folique",                           cat:"Vitamines",     prix:280,  qte:80,  credibilite:98 },
+  ],
+  "ph4": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:50,   qte:180, credibilite:97 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2400, qte:30,  credibilite:98 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:850,  qte:45,  credibilite:96 },
+    { nom:"Ibuprofène 400mg",                              cat:"Antidouleur",   prix:280,  qte:70,  credibilite:99 },
+    { nom:"Cotrimoxazole (TMP/SMX) 480mg",                 cat:"Antibiotique",  prix:140,  qte:130, credibilite:99 },
+    { nom:"Métronidazole 250mg",                           cat:"Antibiotique",  prix:280,  qte:55,  credibilite:95 },
+    { nom:"Phénobarbital 100mg",                           cat:"Neurologie",    prix:180,  qte:25,  credibilite:93 },
+  ],
+  "ph5": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:55,   qte:120, credibilite:91 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2700, qte:12,  credibilite:90 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:880,  qte:20,  credibilite:92 },
+    { nom:"Ciprofloxacine 500mg",                          cat:"Antibiotique",  prix:1700, qte:15,  credibilite:94 },
+  ],
+  "ph6": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:50,   qte:200, credibilite:96 },
+    { nom:"Quinine 300mg comprimés",                       cat:"Antipaludéen",  prix:350,  qte:80,  credibilite:95 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:900,  qte:35,  credibilite:94 },
+    { nom:"Vitamine C 500mg",                              cat:"Vitamines",     prix:100,  qte:200, credibilite:99 },
+    { nom:"Oméprazole 20mg",                               cat:"Gastro",        prix:420,  qte:30,  credibilite:96 },
+  ],
+  "ph7": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:50,   qte:160, credibilite:95 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2550, qte:22,  credibilite:96 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:870,  qte:40,  credibilite:94 },
+    { nom:"Ibuprofène 400mg",                              cat:"Antidouleur",   prix:300,  qte:65,  credibilite:97 },
+    { nom:"Metformine 500mg",                              cat:"Diabète",       prix:570,  qte:45,  credibilite:93 },
+  ],
+  "ph8": [
+    { nom:"Paracétamol 500mg",                             cat:"Antidouleur",   prix:50,   qte:140, credibilite:96 },
+    { nom:"Artéméther + Luméfantrine (Coartem) 20/120mg", cat:"Antipaludéen",  prix:2650, qte:16,  credibilite:95 },
+    { nom:"Quinine 300mg comprimés",                       cat:"Antipaludéen",  prix:360,  qte:55,  credibilite:96 },
+    { nom:"Amoxicilline 250mg gélules",                    cat:"Antibiotique",  prix:860,  qte:28,  credibilite:93 },
+    { nom:"Métronidazole 250mg",                           cat:"Antibiotique",  prix:290,  qte:60,  credibilite:97 },
+  ],
+};
+
+function searchDemoOffline(terme) {
+  const t = terme.toLowerCase().trim();
+  const results = [];
+  DEMO_PHARMACIES_OFFLINE.forEach(ph => {
+    const stocks = DEMO_STOCK_OFFLINE[ph.id] || [];
+    stocks.forEach(item => {
+      if(item.nom.toLowerCase().includes(t) || item.cat.toLowerCase().includes(t)) {
+        results.push({
+          ...item,
+          pharmacieId: ph.id,
+          pharmacieNom: ph.nom,
+          quartier: ph.quartier,
+          adresse: ph.adresse,
+          tel: ph.tel,
+          ouvert: ph.ouvert,
+          lat: ph.lat,
+          lng: ph.lng,
+          updatedAt: Date.now() - Math.floor(Math.random()*3600000),
+        });
+      }
+    });
+  });
+  return results.sort((a,b) => a.prix - b.prix);
+}
+
+
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 const FB_CONFIG = {
   apiKey: "AIzaSyB0JUy2yMKgjkHtbEtpugtdkSACEEgqqHA",
@@ -973,7 +1085,7 @@ function AuthScreen({ onAuth }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 🏠 ACCUEIL PATIENT
 // ══════════════════════════════════════════════════════════════════════════════
-function AccueilPatient({ setPage, setRecherche }) {
+function AccueilPatient({ setPage, setRecherche, isDemoMode }) {
   const fbReady=useFirebaseReady();
   const [query,setQuery]=useState(""); const [catActive,setCatActive]=useState("Tous"); const [suggestions,setSuggestions]=useState([]); const [extraPharma,setExtraPharma]=useState([]);
   useEffect(()=>{if(!fbReady)return;const r=getDB().ref("pharmacies");r.on("value",snap=>{if(snap.exists())setExtraPharma(Object.entries(snap.val()).map(([uid,ph])=>({uid,...ph})));});return()=>r.off();},[fbReady]);
@@ -1325,7 +1437,7 @@ function useSeedDemo(fbReady) {
   },[fbReady]);
 }
 
-function ResultatsPatient({ recherche, setPage }) {
+function ResultatsPatient({ recherche, setPage, isDemoMode }) {
   const fbReady=useFirebaseReady();
   useSeedDemo(fbReady);
   const [resultats,setResultats]=useState([]);
@@ -1336,20 +1448,40 @@ function ResultatsPatient({ recherche, setPage }) {
   useEffect(()=>{
     navigator.geolocation?.getCurrentPosition(
       pos=>setUserPos([pos.coords.latitude,pos.coords.longitude]),
-      ()=>setUserPos([3.8667,11.5167]) // centre Yaoundé par défaut
+      ()=>setUserPos([3.8667,11.5167])
     );
   },[]);
 
   useEffect(()=>{
-    if(!fbReady)return;
     setLoading(true);
+
+    // ── MODE DÉMO OFFLINE ──────────────────────────────────────────────────
+    if(isDemoMode) {
+      setTimeout(()=>{
+        const found = searchDemoOffline(recherche);
+        const pos = userPos||[3.8667,11.5167];
+        const withDist = found.map(item=>({
+          ...item,
+          itemId: item.pharmacieId+"_"+item.nom,
+          pharmacieUid: item.pharmacieId,
+          distance: calculerDistance(pos[0],pos[1],item.lat,item.lng),
+          isDemo: true,
+        }));
+        withDist.sort((a,b)=>a.distance!==b.distance?a.distance-b.distance:a.prix-b.prix);
+        setResultats(withDist);
+        setLoading(false);
+      }, 600); // petit délai réaliste
+      return;
+    }
+
+    // ── MODE RÉEL (Firebase) ───────────────────────────────────────────────
+    if(!fbReady)return;
     getDB().ref("stock").once("value").then(snap=>{
       const found=[];
       if(snap.exists()){
         Object.entries(snap.val()).forEach(([uid,items])=>{
           Object.entries(items).forEach(([itemId,item])=>{
             if(item.nom?.toLowerCase().includes(recherche.toLowerCase())&&item.qte>0){
-              // Calcul distance si géoloc disponible
               const pos=userPos||[3.8667,11.5167];
               const dist=item.lat&&item.lng ? calculerDistance(pos[0],pos[1],item.lat,item.lng) : 99;
               found.push({...item,itemId,pharmacieUid:uid,distance:dist});
@@ -1357,12 +1489,11 @@ function ResultatsPatient({ recherche, setPage }) {
           });
         });
       }
-      // Trier par distance d'abord, puis par prix
       found.sort((a,b)=> a.distance!==b.distance ? a.distance-b.distance : a.prix-b.prix);
       setResultats(found);
       setLoading(false);
     }).catch(()=>setLoading(false));
-  },[fbReady,recherche,userPos]);
+  },[fbReady,recherche,userPos,isDemoMode]);
 
   const catalogueMatch = CATALOGUE_MEDICAMENTS.filter(m=>
     m.nom.toLowerCase().includes(recherche.toLowerCase())
@@ -1909,11 +2040,11 @@ function usePWAInstall() {
   return{prompt,installed,install};
 }
 
-function Topbar({ role, setRole, setPage, user, onLogout, onAdminOpen }) {
+function Topbar({ role, setRole, setPage, user, onLogout, onAdminOpen, isDemoMode, setIsDemoMode }) {
   const [clicks,setClicks]=useState(0);
   const {prompt,installed,install}=usePWAInstall();
   const handleLogoClick=()=>{ const n=clicks+1; setClicks(n); if(n>=5){onAdminOpen();setClicks(0);} setTimeout(()=>setClicks(0),3000); };
-  const [showGuide,setShowGuide]=useState(false); // seulement quand on clique
+  const [showGuide,setShowGuide]=useState(false);
   const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 
   const handleInstallClick=async()=>{
@@ -1930,6 +2061,16 @@ function Topbar({ role, setRole, setPage, user, onLogout, onAdminOpen }) {
         {clicks>0&&clicks<5&&<span style={{fontSize:"0.55rem",marginLeft:6,opacity:0.5}}>{clicks}/5</span>}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
+        {/* Bouton Mode Démo */}
+        <button onClick={()=>setIsDemoMode(d=>!d)} style={{
+          background: isDemoMode?"#F59E0B":"rgba(255,255,255,0.12)",
+          border: isDemoMode?"2px solid #F59E0B":"1px solid rgba(255,255,255,0.3)",
+          color:"white",padding:"5px 11px",borderRadius:99,fontSize:"0.72rem",
+          cursor:"pointer",fontFamily:"Mulish",fontWeight:700,whiteSpace:"nowrap",
+          display:"flex",alignItems:"center",gap:4,transition:"all 0.2s"
+        }}>
+          {isDemoMode?"⏹ Quitter démo":"▶ Démo"}
+        </button>
         {!installed&&(
           <button onClick={handleInstallClick} style={{
             background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.35)",
@@ -1950,6 +2091,31 @@ function Topbar({ role, setRole, setPage, user, onLogout, onAdminOpen }) {
       </div>
     </div>
 
+    {/* Bannière Mode Démo */}
+    {isDemoMode&&(
+      <div style={{
+        background:"linear-gradient(90deg,#F59E0B,#D97706)",
+        padding:"8px 16px",display:"flex",alignItems:"center",
+        justifyContent:"space-between",flexWrap:"wrap",gap:8
+      }}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:"1.1rem"}}>🎭</span>
+          <div>
+            <span style={{color:"#1C1917",fontWeight:800,fontSize:"0.82rem",fontFamily:"Mulish"}}>
+              MODE DÉMO ACTIVÉ
+            </span>
+            <span style={{color:"#44403C",fontSize:"0.75rem",fontFamily:"Mulish",marginLeft:8}}>
+              Données fictives · Fonctionne sans internet · Parfait pour vos présentations
+            </span>
+          </div>
+        </div>
+        <button onClick={()=>setIsDemoMode(false)} style={{
+          background:"rgba(0,0,0,0.15)",border:"none",color:"#1C1917",
+          padding:"4px 12px",borderRadius:99,cursor:"pointer",
+          fontSize:"0.75rem",fontFamily:"Mulish",fontWeight:700
+        }}>Quitter la démo</button>
+      </div>
+    )}
     {/* Guide d'installation — toujours disponible */}
     {showGuide&&!installed&&(
       <div style={{background:"#0D2B3E",padding:"16px 20px",borderBottom:"3px solid #0A7B6C",position:"relative",zIndex:50}}>
@@ -2148,6 +2314,7 @@ export default function App() {
   const fbReady=useFirebaseReady();
   const [user,setUser]=useState(null); const [authChecked,setAuthChecked]=useState(false);
   const [role,setRole]=useState("patient"); const [page,setPage]=useState("accueil");
+  const [isDemoMode,setIsDemoMode]=useState(false);
   const [recherche,setRecherche]=useState(""); const [stock,setStock]=useState([]);
   const [adminOpen,setAdminOpen]=useState(false);
   useEffect(()=>{
@@ -2172,7 +2339,7 @@ export default function App() {
   const tabs=role==="patient"?TABS_PATIENT:TABS_PH;
   return(
     <div className="app">
-      <Topbar role={role} setRole={setRole} setPage={setPage} user={user} onLogout={handleLogout} onAdminOpen={()=>setAdminOpen(true)}/>
+      <Topbar role={role} setRole={setRole} setPage={setPage} user={user} onLogout={handleLogout} onAdminOpen={()=>setAdminOpen(true)} isDemoMode={isDemoMode} setIsDemoMode={setIsDemoMode}/>
       {adminOpen&&<PageAdmin onClose={()=>setAdminOpen(false)}/>}
       <div style={{
         display:"flex",background:"white",
@@ -2203,10 +2370,10 @@ export default function App() {
           </div>
         ))}
       </div>
-      {role==="patient"&&page==="accueil"   &&<AccueilPatient setPage={setPage} setRecherche={setRecherche}/>}
+      {role==="patient"&&page==="accueil"   &&<AccueilPatient setPage={setPage} setRecherche={setRecherche} isDemoMode={isDemoMode}/>}
       {role==="patient"&&page==="carte"     &&<PageCarte/>}
       {role==="patient"&&page==="garde"     &&<PageGarde setPage={setPage}/>}
-      {role==="patient"&&page==="resultats" &&<ResultatsPatient recherche={recherche||"Paracétamol"} setPage={setPage}/>}
+      {role==="patient"&&page==="resultats" &&<ResultatsPatient recherche={recherche||"Paracétamol"} setPage={setPage} isDemoMode={isDemoMode}/>}
       {role==="patient"&&page==="compte"&&!user&&<AuthPatient onAuth={u=>{setUser(u);setRole("patient");setPage("accueil");}} onSkip={()=>setPage("accueil")}/>}
       {role==="patient"&&page==="compte"&&user&&user.role==="patient"&&<ProfilPatient user={user} onLogout={()=>{getAuth().signOut();setUser(null);setRole("patient");setPage("accueil");}}/>}
       {role==="pharmacie"&&!user            &&<AuthScreen onAuth={handleAuth}/>}
