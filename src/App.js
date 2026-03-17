@@ -113,6 +113,74 @@ function searchDemoOffline(terme) {
 }
 
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 🔍 RECHERCHE FLOUE — tolère les fautes d'orthographe
+// ══════════════════════════════════════════════════════════════════════════════
+function normaliser(str) {
+  return str.toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g,"") // enlever accents
+    .replace(/[^a-z0-9 ]/g," ")                      // garder lettres/chiffres
+    .replace(/\s+/g," ").trim();
+}
+
+function distanceLevenshtein(a, b) {
+  // Distance d'édition — mesure combien de lettres sont différentes
+  const m=a.length, n=b.length;
+  if(m===0)return n; if(n===0)return m;
+  const dp=Array.from({length:m+1},(_,i)=>Array.from({length:n+1},(_,j)=>i===0?j:j===0?i:0));
+  for(let i=1;i<=m;i++) for(let j=1;j<=n;j++)
+    dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+function scoreFuzzy(query, medicament) {
+  const q  = normaliser(query);
+  const nom = normaliser(medicament.nom);
+  const cat = normaliser(medicament.cat||"");
+  const mots = nom.split(" ");
+
+  // 1. Correspondance exacte au début — meilleur score
+  if(nom.startsWith(q)) return 100;
+
+  // 2. Contient le terme exact
+  if(nom.includes(q)) return 90;
+
+  // 3. Correspondance sur un mot du nom
+  for(const mot of mots){
+    if(mot.startsWith(q)) return 85;
+    if(mot.includes(q))   return 75;
+  }
+
+  // 4. Catégorie contient le terme
+  if(cat.includes(q)) return 60;
+
+  // 5. Faute d'orthographe légère — distance Levenshtein sur chaque mot
+  for(const mot of mots){
+    if(mot.length<3) continue;
+    const dist = distanceLevenshtein(q, mot);
+    const seuil = q.length<=4?1:q.length<=7?2:3;
+    if(dist<=seuil) return Math.max(20, 70 - dist*15);
+  }
+
+  // 6. Faute sur le nom complet (pour les mots courts)
+  if(q.length>=3){
+    const dist = distanceLevenshtein(q, nom.slice(0,q.length+2));
+    if(dist<=2) return Math.max(10, 50-dist*10);
+  }
+
+  return 0;
+}
+
+function rechercherFloue(query, limite=7) {
+  if(!query||query.trim().length<2) return [];
+  const scored = CATALOGUE_MEDICAMENTS
+    .map(m=>({ ...m, score: scoreFuzzy(query, m) }))
+    .filter(m=>m.score>0)
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,limite);
+  return scored;
+}
+
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 const FB_CONFIG = {
   apiKey: "AIzaSyB0JUy2yMKgjkHtbEtpugtdkSACEEgqqHA",
@@ -1291,7 +1359,7 @@ function AccueilPatient({ setPage, setRecherche, isDemoMode }) {
   const fbReady=useFirebaseReady();
   const [query,setQuery]=useState(""); const [catActive,setCatActive]=useState("Tous"); const [suggestions,setSuggestions]=useState([]); const [extraPharma,setExtraPharma]=useState([]);
   useEffect(()=>{if(!fbReady)return;const r=getDB().ref("pharmacies");r.on("value",snap=>{if(snap.exists())setExtraPharma(Object.entries(snap.val()).map(([uid,ph])=>({uid,...ph})));});return()=>r.off();},[fbReady]);
-  const handleInput=v=>{setQuery(v);setSuggestions(v.length>1?CATALOGUE_MEDICAMENTS.filter(m=>m.nom.toLowerCase().includes(v.toLowerCase())).slice(0,6):[]);};
+  const handleInput=v=>{setQuery(v);setSuggestions(v.length>1?rechercherFloue(v,7):[]);};
   const rechercher=nom=>{const q=nom||query;if(!q.trim())return;setRecherche(q);setPage("resultats");setSuggestions([]);};
   const filtered=catActive==="Tous"?CATALOGUE_MEDICAMENTS:CATALOGUE_MEDICAMENTS.filter(m=>m.cat===catActive);
   const allPh=[...PHARMACIES_YAOUNDE,...extraPharma];
@@ -1303,7 +1371,21 @@ function AccueilPatient({ setPage, setRecherche, isDemoMode }) {
         <div className="search-row">
           <div className="search-input-wrap"><span className="search-ico">🔍</span><input value={query} onChange={e=>handleInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&rechercher()} placeholder="Ex: Coartem, Amoxicilline, Insuline..."/></div>
           <button className="btn-search" onClick={()=>rechercher()}>Rechercher</button>
-          {suggestions.length>0&&<div className="suggestions">{suggestions.map(s=><div key={s.id} className="suggestion-item" onClick={()=>rechercher(s.nom)}><span>{s.emoji}</span><span style={{flex:1,fontSize:"0.82rem"}}>{s.nom}</span><span className="tag tag-blue">{s.cat}</span><span style={{fontSize:"0.72rem",color:"var(--teal)",fontWeight:700,marginLeft:8,whiteSpace:"nowrap"}}>~{s.prixRef} F</span></div>)}</div>}
+          {suggestions.length>0&&(
+            <div className="suggestions">
+              {suggestions.map(s=>(
+                <div key={s.id} className="suggestion-item" onClick={()=>rechercher(s.nom)}>
+                  <span>{s.emoji}</span>
+                  <span style={{flex:1,fontSize:"0.82rem"}}>
+                    {s.nom}
+                    {s.score<75&&<span style={{fontSize:"0.68rem",color:"#9CA3AF",marginLeft:4,fontStyle:"italic"}}> — vouliez-vous dire ?</span>}
+                  </span>
+                  <span className="tag tag-blue">{s.cat}</span>
+                  <span style={{fontSize:"0.72rem",color:"var(--teal)",fontWeight:700,marginLeft:8,whiteSpace:"nowrap"}}>~{s.prixRef} F</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="grid-4 mb24">
@@ -1894,7 +1976,9 @@ function ResultatsPatient({ recherche, setPage, isDemoMode, user }) {
       if(snap.exists()){
         Object.entries(snap.val()).forEach(([uid,items])=>{
           Object.entries(items).forEach(([itemId,item])=>{
-            if(item.nom?.toLowerCase().includes(recherche.toLowerCase())&&item.qte>0){
+            // Recherche floue : correspondance directe OU faute d'orthographe tolérée
+            const scoreItem = scoreFuzzy(recherche, {nom:item.nom||"",cat:item.cat||""});
+            if(scoreItem>0&&item.qte>0){
               const pos=userPos||[3.8667,11.5167];
               const dist=item.lat&&item.lng ? calculerDistance(pos[0],pos[1],item.lat,item.lng) : 99;
               found.push({...item,itemId,pharmacieUid:uid,distance:dist});
@@ -2194,7 +2278,7 @@ function AjouterMedicament({ user, setPage }) {
   const [catPrix,setCatPrix]=useState({});
 
   const setF=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const handleNomInput=v=>{setF("nom",v);setSuggestions(v.length>1?CATALOGUE_MEDICAMENTS.filter(m=>m.nom.toLowerCase().includes(v.toLowerCase())).slice(0,6):[]);};
+  const handleNomInput=v=>{setF("nom",v);setSuggestions(v.length>1?rechercherFloue(v,6):[]);};
   const selectSuggestion=m=>{setForm({nom:m.nom,cat:m.cat,prix:String(m.prixRef),qte:"",exp:""});setSuggestions([]);};
 
   // ── Ajout manuel
