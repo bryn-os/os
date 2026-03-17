@@ -1059,25 +1059,227 @@ function PageCarte() {
 // 🔐 AUTH SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
 function AuthScreen({ onAuth }) {
-  const [mode,setMode]=useState("login"); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [nom,setNom]=useState(""); const [quartier,setQuartier]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState("");
-  const handleSubmit=async()=>{
+  const fbReady = useFirebaseReady();
+  const [mode,setMode]       = useState("choix");
+  const [email,setEmail]     = useState("");
+  const [password,setPassword] = useState("");
+  const [nom,setNom]         = useState("");
+  const [tel,setTel]         = useState("");
+  const [quartier,setQuartier] = useState("");
+  const [adresse,setAdresse] = useState("");
+  const [loading,setLoading] = useState(false);
+  const [error,setError]     = useState("");
+  const [step,setStep]       = useState(1); // étapes inscription
+
+  const QUARTIERS = ["Bastos","Centre-ville","Obili","Tsinga","Madagascar","Biyem-Assi",
+    "Melen","Essos","Nlongkak","Cité Verte","Odza","Mvog-Mbi","Mendong","Ekounou",
+    "Nkomo","Emana","Mimboman","Nsam","Ngousso","Mokolo","Hippodrome","Nylon",
+    "Simbock","Nkol-Eton","Mvog-Ada","Ahala","Damas","Nkol-Bisson","Mfandena"];
+
+  const ERREURS_FR = {
+    "auth/email-already-in-use": "Cet email est déjà utilisé. Connectez-vous à la place.",
+    "auth/weak-password":        "Mot de passe trop court (minimum 6 caractères).",
+    "auth/invalid-credential":   "Email ou mot de passe incorrect. Vérifiez et réessayez.",
+    "auth/user-not-found":       "Aucun compte trouvé avec cet email.",
+    "auth/wrong-password":       "Mot de passe incorrect.",
+    "auth/invalid-email":        "Format d'email invalide.",
+    "auth/too-many-requests":    "Trop de tentatives. Attendez quelques minutes.",
+    "auth/network-request-failed":"Pas de connexion internet. Vérifiez votre réseau.",
+  };
+
+  const handleLogin = async()=>{
+    if(!email||!password){setError("Email et mot de passe obligatoires.");return;}
     setError(""); setLoading(true);
     try{
-      if(mode==="login"){const cred=await getAuth().signInWithEmailAndPassword(email,password);const snap=await getDB().ref("users/"+cred.user.uid).get();const d=snap.val()||{};onAuth({uid:cred.user.uid,email,role:d.role||"pharmacie",nomPharmacie:d.nom});}
-      else{const cred=await getAuth().createUserWithEmailAndPassword(email,password);const uid=cred.user.uid;await getDB().ref("users/"+uid).set({email,role:"pharmacie",nom,createdAt:Date.now()});await getDB().ref("pharmacies/"+uid).set({nom,quartier:quartier||"Yaoundé",adresse:(quartier||"Yaoundé")+", Yaoundé",tel:"",ouvert:true,adminUid:uid,createdAt:Date.now(),lat:3.8667+(Math.random()-0.5)*0.08,lng:11.5167+(Math.random()-0.5)*0.08});for(const med of STOCK_DEMO)await getDB().ref("stock/"+uid).push({...med,pharmacieId:uid,pharmacieNom:nom,exp:"N/A",updatedAt:Date.now()});onAuth({uid,email,role:"pharmacie",nomPharmacie:nom});}
-    }catch(e){const m={"auth/email-already-in-use":"Email déjà utilisé.","auth/weak-password":"Mot de passe trop court.","auth/invalid-credential":"Email ou mot de passe incorrect."};setError(m[e.code]||e.message);}
+      const cred = await getAuth().signInWithEmailAndPassword(email,password);
+      const snap = await getDB().ref("users/"+cred.user.uid).once("value");
+      const d    = snap.val()||{};
+      if(d.role && d.role!=="pharmacie"){
+        setError("Ce compte n'est pas un compte pharmacie.");
+        setLoading(false); return;
+      }
+      const phSnap = await getDB().ref("pharmacies/"+cred.user.uid).once("value");
+      const ph = phSnap.val()||{};
+      onAuth({uid:cred.user.uid, email, role:"pharmacie", nomPharmacie:d.nom||ph.nom||"Ma Pharmacie", tel:ph.tel||""});
+    }catch(e){ setError(ERREURS_FR[e.code]||"Erreur : "+e.message); }
     setLoading(false);
   };
-  return(
+
+  const handleRegister = async()=>{
+    // Validations
+    if(!nom.trim()){setError("Le nom de la pharmacie est obligatoire.");return;}
+    if(!tel.trim()){setError("Le numéro de téléphone est obligatoire.");return;}
+    if(!quartier){setError("Veuillez sélectionner votre quartier.");return;}
+    if(!email.trim()){setError("L'email est obligatoire.");return;}
+    if(!password||password.length<6){setError("Mot de passe minimum 6 caractères.");return;}
+    setError(""); setLoading(true);
+    try{
+      const cred = await getAuth().createUserWithEmailAndPassword(email,password);
+      const uid  = cred.user.uid;
+      // Coordonnées approx selon quartier
+      const coordsMap = {
+        "Bastos":{lat:3.8820,lng:11.5050},"Centre-ville":{lat:3.8667,lng:11.5167},
+        "Obili":{lat:3.8550,lng:11.5080},"Biyem-Assi":{lat:3.8450,lng:11.4980},
+        "Essos":{lat:3.8710,lng:11.5350},"Nlongkak":{lat:3.8780,lng:11.5220},
+        "Melen":{lat:3.8620,lng:11.5290},"Mvog-Ada":{lat:3.8480,lng:11.5280},
+        "Tsinga":{lat:3.8750,lng:11.5100},"Madagascar":{lat:3.8600,lng:11.5200},
+      };
+      const coords = coordsMap[quartier]||{lat:3.8667+(Math.random()-0.5)*0.05,lng:11.5167+(Math.random()-0.5)*0.05};
+
+      // Créer le compte utilisateur
+      await getDB().ref("users/"+uid).set({
+        email, role:"pharmacie", nom:nom.trim(), tel:tel.trim(), createdAt:Date.now()
+      });
+      // Créer la fiche pharmacie — SANS STOCK DEMO
+      await getDB().ref("pharmacies/"+uid).set({
+        nom:       nom.trim(),
+        quartier:  quartier,
+        adresse:   adresse.trim()||(quartier+", Yaoundé"),
+        tel:       tel.trim(),
+        ouvert:    true,
+        adminUid:  uid,
+        lat:       coords.lat,
+        lng:       coords.lng,
+        createdAt: Date.now(),
+        isReal:    true,
+      });
+      onAuth({uid, email, role:"pharmacie", nomPharmacie:nom.trim(), tel:tel.trim()});
+    }catch(e){ setError(ERREURS_FR[e.code]||"Erreur : "+e.message); }
+    setLoading(false);
+  };
+
+  // ── Écran de choix ────────────────────────────────────────────────────────
+  if(mode==="choix") return(
     <div className="auth-screen"><div className="auth-card">
-      <div className="auth-logo">Medic<span>online</span></div><div className="auth-sub">📍 Yaoundé — Espace Pharmacie</div>
-      <div className="auth-tabs"><div className={"auth-tab"+(mode==="login"?" active":"")} onClick={()=>{setMode("login");setError("");}}>Connexion</div><div className={"auth-tab"+(mode==="register"?" active":"")} onClick={()=>{setMode("register");setError("");}}>Inscription</div></div>
+      <div className="auth-logo">Medic<span>online</span></div>
+      <div className="auth-sub">📍 Yaoundé — Espace Pharmacie</div>
+      <div style={{textAlign:"center",margin:"24px 0 8px"}}>
+        <div style={{fontSize:"2.5rem",marginBottom:8}}>🏥</div>
+        <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1.1rem",color:"var(--navy)"}}>Bienvenue sur Mediconline</div>
+        <div style={{color:"var(--grey-text)",fontSize:"0.83rem",marginTop:6,lineHeight:1.6}}>
+          Rendez votre pharmacie visible auprès de milliers de patients à Yaoundé.<br/>
+          Gratuit · Rapide · En temps réel
+        </div>
+      </div>
+      <button className="btn btn-primary btn-full" style={{marginBottom:12}} onClick={()=>setMode("register")}>
+        🏥 Inscrire ma pharmacie — Gratuit
+      </button>
+      <button className="btn btn-secondary btn-full" onClick={()=>setMode("login")}>
+        🔐 J'ai déjà un compte
+      </button>
+    </div></div>
+  );
+
+  // ── Connexion ─────────────────────────────────────────────────────────────
+  if(mode==="login") return(
+    <div className="auth-screen"><div className="auth-card">
+      <div className="auth-logo">Medic<span>online</span></div>
+      <div className="auth-sub">🔐 Connexion Pharmacie</div>
       {error&&<div className="alert alert-error mb16"><span className="alert-ico">⚠️</span><span>{error}</span></div>}
-      {mode==="register"&&<><div className="form-group"><label className="form-label">Nom de la pharmacie *</label><input className="form-input" placeholder="ex: Pharmacie Bastos" value={nom} onChange={e=>setNom(e.target.value)}/></div><div className="form-group"><label className="form-label">Quartier</label><select className="form-input" value={quartier} onChange={e=>setQuartier(e.target.value)}><option value="">Sélectionner...</option>{["Bastos","Centre-ville","Obili","Tsinga","Madagascar","Biyem-Assi","Melen","Essos","Nlongkak","Cité Verte","Odza","Mvog-Mbi","Mendong","Ekounou","Nkomo","Emana","Mimboman","Nsam","Ngousso","Mokolo","Hippodrome","Nylon","Simbock","Nkol-Eton","Mvog-Ada","Ahala","Damas"].map(q=><option key={q} value={q}>{q}</option>)}</select></div></>}
-      <div className="form-group"><label className="form-label">Email *</label><input className="form-input" type="email" placeholder="votre@email.com" value={email} onChange={e=>setEmail(e.target.value)}/></div>
-      <div className="form-group"><label className="form-label">Mot de passe *</label><input className="form-input" type="password" placeholder="Min. 6 caractères" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSubmit()}/></div>
-      <button className="btn btn-primary btn-full" onClick={handleSubmit} disabled={loading}>{loading?"⏳ Chargement...":mode==="login"?"🔐 Se connecter":"✅ Créer mon compte"}</button>
-      <div className="auth-footer">{mode==="login"?<span>Pas de compte ? <b style={{cursor:"pointer",color:"var(--teal)"}} onClick={()=>setMode("register")}>S'inscrire</b></span>:<span>Déjà un compte ? <b style={{cursor:"pointer",color:"var(--teal)"}} onClick={()=>setMode("login")}>Se connecter</b></span>}</div>
+      <div className="form-group">
+        <label className="form-label">Email *</label>
+        <input className="form-input" type="email" placeholder="votre@email.com" value={email} onChange={e=>setEmail(e.target.value)}/>
+      </div>
+      <div className="form-group">
+        <label className="form-label">Mot de passe *</label>
+        <input className="form-input" type="password" placeholder="Votre mot de passe" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+      </div>
+      <button className="btn btn-primary btn-full" onClick={handleLogin} disabled={loading||!fbReady}>
+        {loading?"⏳ Connexion en cours...":"🔐 Se connecter"}
+      </button>
+      <div className="auth-footer">
+        <span>Pas de compte ? <b style={{cursor:"pointer",color:"var(--teal)"}} onClick={()=>{setMode("register");setError("");}}>Inscrire ma pharmacie</b></span>
+      </div>
+      <div style={{textAlign:"center",marginTop:8}}>
+        <span style={{fontSize:"0.75rem",color:"var(--grey-text)",cursor:"pointer",textDecoration:"underline"}} onClick={()=>{setMode("choix");setError("");}}>← Retour</span>
+      </div>
+    </div></div>
+  );
+
+  // ── Inscription en 2 étapes ───────────────────────────────────────────────
+  return(
+    <div className="auth-screen"><div className="auth-card" style={{maxHeight:"90vh",overflowY:"auto"}}>
+      <div className="auth-logo">Medic<span>online</span></div>
+      <div className="auth-sub">🏥 Inscription Pharmacie</div>
+
+      {/* Indicateur d'étapes */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,margin:"12px 0 20px"}}>
+        {[1,2].map(s=>(
+          <div key={s} style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{
+              width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",
+              justifyContent:"center",fontWeight:700,fontSize:"0.8rem",
+              background:step>=s?"var(--teal)":"#E5E7EB",
+              color:step>=s?"white":"#9CA3AF"
+            }}>{step>s?"✓":s}</div>
+            {s<2&&<div style={{width:40,height:2,background:step>s?"var(--teal)":"#E5E7EB"}}/>}
+          </div>
+        ))}
+      </div>
+      <div style={{textAlign:"center",fontSize:"0.78rem",color:"var(--grey-text)",marginBottom:16}}>
+        {step===1?"Informations de la pharmacie":"Accès et sécurité"}
+      </div>
+
+      {error&&<div className="alert alert-error mb16"><span className="alert-ico">⚠️</span><span>{error}</span></div>}
+
+      {step===1&&(<>
+        <div className="form-group">
+          <label className="form-label">Nom de la pharmacie *</label>
+          <input className="form-input" placeholder="ex: Pharmacie Bastos" value={nom} onChange={e=>setNom(e.target.value)}/>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Numéro de téléphone *</label>
+          <input className="form-input" type="tel" placeholder="ex: 699 123 456" value={tel} onChange={e=>setTel(e.target.value)}/>
+          <div style={{fontSize:"0.72rem",color:"var(--grey-text)",marginTop:4}}>Les patients pourront vous appeler depuis l'app</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Quartier *</label>
+          <select className="form-input" value={quartier} onChange={e=>setQuartier(e.target.value)}>
+            <option value="">Sélectionner votre quartier...</option>
+            {QUARTIERS.map(q=><option key={q} value={q}>{q}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Adresse précise <span style={{color:"var(--grey-text)",fontWeight:400}}>(optionnel)</span></label>
+          <input className="form-input" placeholder="ex: Face au marché, Rue principale" value={adresse} onChange={e=>setAdresse(e.target.value)}/>
+        </div>
+        <button className="btn btn-primary btn-full" onClick={()=>{
+          if(!nom.trim()){setError("Le nom de la pharmacie est obligatoire.");return;}
+          if(!tel.trim()){setError("Le numéro de téléphone est obligatoire.");return;}
+          if(!quartier){setError("Veuillez sélectionner votre quartier.");return;}
+          setError(""); setStep(2);
+        }}>Suivant →</button>
+      </>)}
+
+      {step===2&&(<>
+        <div style={{background:"#F0FDF4",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:"0.8rem",color:"#065F46"}}>
+          ✅ <strong>{nom}</strong> · {quartier} · {tel}
+          <span style={{cursor:"pointer",color:"var(--teal)",marginLeft:8,fontSize:"0.72rem"}} onClick={()=>setStep(1)}>Modifier</span>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Email professionnel *</label>
+          <input className="form-input" type="email" placeholder="pharmacie@email.com" value={email} onChange={e=>setEmail(e.target.value)}/>
+          <div style={{fontSize:"0.72rem",color:"var(--grey-text)",marginTop:4}}>Pour vous connecter à Mediconline</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Mot de passe *</label>
+          <input className="form-input" type="password" placeholder="Minimum 6 caractères" value={password} onChange={e=>setPassword(e.target.value)}/>
+        </div>
+        <div style={{background:"#EFF6FF",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:"0.77rem",color:"#1E40AF",lineHeight:1.6}}>
+          🔒 Vos données sont sécurisées avec Firebase.<br/>
+          Mediconline ne partage jamais vos informations.
+        </div>
+        <button className="btn btn-primary btn-full" onClick={handleRegister} disabled={loading||!fbReady}>
+          {loading?"⏳ Création du compte...":(fbReady?"✅ Créer mon compte et démarrer":"⏳ Connexion Firebase...")}
+        </button>
+        <div style={{textAlign:"center",marginTop:8}}>
+          <span style={{fontSize:"0.75rem",color:"var(--grey-text)",cursor:"pointer"}} onClick={()=>setStep(1)}>← Retour</span>
+        </div>
+      </>)}
+
+      <div className="auth-footer">
+        <span>Déjà un compte ? <b style={{cursor:"pointer",color:"var(--teal)"}} onClick={()=>{setMode("login");setError("");}}>Se connecter</b></span>
+      </div>
     </div></div>
   );
 }
@@ -1792,6 +1994,7 @@ function Dashboard({ stock, setPage, user }) {
   const [credibilite,setCredibilite]=useState(100);
   const {rappels,marquerLu}=useRappelNotifications(user,fbReady);
   useRappelStock(user,stock);
+  const [reservations,setReservations]=useState([]);
 
   useEffect(()=>{
     if(!fbReady||!user?.uid)return;
@@ -1800,12 +2003,28 @@ function Dashboard({ stock, setPage, user }) {
       if(snap.exists()){
         const sigs=Object.values(snap.val());
         setSignalements(sigs);
-        // Calculer crédibilité : -5 par signalement, min 0
         const score=Math.max(0,100-sigs.reduce((a,s)=>a+(s.count||1)*5,0));
         setCredibilite(score);
       }
     });
-    return()=>getDB().ref("signalements/"+user.uid).off();
+    // Charger réservations actives
+    getDB().ref("reservations/"+user.uid).on("value",snap=>{
+      if(!snap.exists()){setReservations([]);return;}
+      const now=Date.now();
+      const actives=[];
+      Object.entries(snap.val()).forEach(([itemId,resMap])=>{
+        Object.entries(resMap).forEach(([resId,res])=>{
+          if(res.status==="active"&&res.expiration>now){
+            actives.push({...res,resId,itemId});
+          }
+        });
+      });
+      setReservations(actives);
+    });
+    return()=>{
+      getDB().ref("signalements/"+user.uid).off();
+      getDB().ref("reservations/"+user.uid).off();
+    };
   },[fbReady,user]);
 
   const credColor=credibilite>=80?"#2DC653":credibilite>=50?"#F4A261":"var(--red)";
@@ -1841,6 +2060,30 @@ function Dashboard({ stock, setPage, user }) {
             <button className="btn btn-secondary btn-sm" style={{marginTop:8}} onClick={()=>setPage("stock")}>
               📦 Mettre à jour le stock maintenant
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Réservations actives ── */}
+      {reservations.length>0&&(
+        <div className="alert mb16" style={{background:"#EFF6FF",border:"1.5px solid #3B82F6",color:"#1E40AF"}}>
+          <span className="alert-ico">🔔</span>
+          <div style={{flex:1}}>
+            <strong>{reservations.length} patient{reservations.length>1?"s":""}  en route vers votre pharmacie</strong>
+            <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+              {reservations.map((res,i)=>{
+                const restant=Math.max(0,Math.round((res.expiration-Date.now())/60000));
+                return(
+                  <div key={i} style={{fontSize:"0.8rem",display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(255,255,255,0.6)",borderRadius:6,padding:"4px 10px"}}>
+                    <span>💊 <strong>{res.medicament}</strong></span>
+                    <span style={{color:"#D97706",fontWeight:700}}>⏱ {restant<60?restant+"min":Math.round(restant/60)+"h"} restantes</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:"0.75rem",marginTop:6,opacity:0.8}}>
+              Préparez ces médicaments — les réservations expirent dans 2h maximum.
+            </div>
           </div>
         </div>
       )}
@@ -2206,24 +2449,165 @@ function AjouterMedicament({ user, setPage }) {
 // ⚙️ PROFIL PHARMACIE
 // ══════════════════════════════════════════════════════════════════════════════
 function ProfilPharmacie({ user }) {
-  const [edit,setEdit]=useState(false); const [info,setInfo]=useState({nom:"",quartier:"",adresse:"",tel:"",ouverture:"08:00",fermeture:"22:00"}); const [tmp,setTmp]=useState(info);
-  useEffect(()=>{if(!user?.uid)return;getDB().ref("pharmacies/"+user.uid).once("value").then(snap=>{if(snap.exists()){const d=snap.val();setInfo({nom:d.nom||"",quartier:d.quartier||"",adresse:d.adresse||"",tel:d.tel||"",ouverture:d.ouverture||"08:00",fermeture:d.fermeture||"22:00"});}});},[user]);
-  const sauvegarder=async()=>{await getDB().ref("pharmacies/"+user.uid).update({...tmp,updatedAt:Date.now()});setInfo(tmp);setEdit(false);};
+  const fbReady = useFirebaseReady();
+  const [edit,setEdit]     = useState(false);
+  const [saving,setSaving] = useState(false);
+  const [saved,setSaved]   = useState(false);
+  const [info,setInfo]     = useState({nom:"",quartier:"",adresse:"",tel:"",ouverture:"08:00",fermeture:"22:00",ouvert:true});
+  const [tmp,setTmp]       = useState(info);
+
+  const QUARTIERS = ["Bastos","Centre-ville","Obili","Tsinga","Madagascar","Biyem-Assi",
+    "Melen","Essos","Nlongkak","Cité Verte","Odza","Mvog-Mbi","Mendong","Ekounou",
+    "Nkomo","Emana","Mimboman","Nsam","Ngousso","Mokolo","Hippodrome","Nylon",
+    "Simbock","Nkol-Eton","Mvog-Ada","Ahala","Damas"];
+
+  useEffect(()=>{
+    if(!user?.uid||!fbReady)return;
+    getDB().ref("pharmacies/"+user.uid).on("value",snap=>{
+      if(snap.exists()){
+        const d=snap.val();
+        const data={nom:d.nom||"",quartier:d.quartier||"",adresse:d.adresse||"",
+          tel:d.tel||"",ouverture:d.ouverture||"07:00",fermeture:d.fermeture||"22:00",
+          ouvert:d.ouvert!==false};
+        setInfo(data); setTmp(data);
+      }
+    });
+    return()=>getDB().ref("pharmacies/"+user.uid).off();
+  },[user,fbReady]);
+
+  const sauvegarder = async()=>{
+    setSaving(true);
+    try{
+      await getDB().ref("pharmacies/"+user.uid).update({...tmp,updatedAt:Date.now()});
+      setInfo(tmp); setEdit(false); setSaved(true);
+      setTimeout(()=>setSaved(false),3000);
+    }catch(e){ alert("Erreur de sauvegarde : "+e.message); }
+    setSaving(false);
+  };
+
+  const toggleOuvert = async()=>{
+    const newVal=!info.ouvert;
+    setInfo(i=>({...i,ouvert:newVal}));
+    await getDB().ref("pharmacies/"+user.uid).update({ouvert:newVal,updatedAt:Date.now()});
+  };
+
   const set=(k,v)=>setTmp(f=>({...f,[k]:v}));
+
   return(
-    <div className="main"><div className="page-title mb20">Ma Pharmacie</div>
-    <div className="card form-card">
-      <div className="profile-header"><div className="avatar">🏥</div><div><div className="profile-name">{info.nom||"Ma Pharmacie"}</div><div className="profile-status"><span className="status-dot online"></span>Connectée · {info.quartier||"Yaoundé"}</div></div><button className="btn btn-secondary btn-sm ml-auto" onClick={()=>{setEdit(!edit);setTmp(info);}}>{edit?"Annuler":"✏️ Modifier"}</button></div>
-      <hr className="divider"/>
-      {edit?(
-        <>{[{k:"nom",l:"Nom"},{k:"quartier",l:"Quartier"},{k:"adresse",l:"Adresse"},{k:"tel",l:"Téléphone"}].map(({k,l})=><div key={k} className="form-group"><label className="form-label">{l}</label><input className="form-input" value={tmp[k]} onChange={e=>set(k,e.target.value)}/></div>)}
-        <div className="grid-2"><div className="form-group"><label className="form-label">Ouverture</label><input className="form-input" type="time" value={tmp.ouverture} onChange={e=>set("ouverture",e.target.value)}/></div><div className="form-group"><label className="form-label">Fermeture</label><input className="form-input" type="time" value={tmp.fermeture} onChange={e=>set("fermeture",e.target.value)}/></div></div>
-        <button className="btn btn-primary btn-full" onClick={sauvegarder}>✅ Enregistrer</button></>
-      ):(
-        <>{[{ico:"📍",lbl:"Adresse",val:info.adresse||"—"},{ico:"🏘",lbl:"Quartier",val:info.quartier||"—"},{ico:"📞",lbl:"Téléphone",val:info.tel||"—"},{ico:"🕐",lbl:"Horaires",val:info.ouverture+" – "+info.fermeture}].map((r,i)=><div key={i} className="info-row"><span className="info-lbl">{r.ico} {r.lbl}</span><span className="info-val">{r.val}</span></div>)}
-        <div className="mt16"><div className="alert alert-success"><span className="alert-ico">🔥</span><span><strong>Firebase sync</strong> — Visible par les patients de Yaoundé</span></div></div></>
-      )}
-    </div></div>
+    <div className="main">
+      <div className="page-title mb20">⚙️ Ma Pharmacie</div>
+
+      {saved&&<div className="alert alert-success mb16"><span className="alert-ico">✅</span><span>Informations mises à jour — visibles par les patients en temps réel !</span></div>}
+
+      {/* Statut ouvert/fermé — toujours visible */}
+      <div className="card mb16" style={{padding:"16px 20px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:"0.9rem",color:"var(--navy)"}}>Statut de la pharmacie</div>
+            <div style={{fontSize:"0.8rem",color:"var(--grey-text)",marginTop:2}}>
+              Les patients voient ce statut en temps réel
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontWeight:700,color:info.ouvert?"#059669":"#DC2626",fontSize:"0.9rem"}}>
+              {info.ouvert?"🟢 Ouverte":"🔴 Fermée"}
+            </span>
+            <button onClick={toggleOuvert} style={{
+              background:info.ouvert?"#059669":"#DC2626",
+              color:"white",border:"none",padding:"8px 18px",
+              borderRadius:99,cursor:"pointer",fontWeight:700,
+              fontFamily:"Mulish",fontSize:"0.82rem"
+            }}>
+              {info.ouvert?"Marquer Fermée":"Marquer Ouverte"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Informations */}
+      <div className="card form-card">
+        <div className="profile-header">
+          <div className="avatar">🏥</div>
+          <div>
+            <div className="profile-name">{info.nom||"Ma Pharmacie"}</div>
+            <div className="profile-status">
+              <span className="status-dot online"></span>
+              {info.quartier||"Yaoundé"} · {info.tel||"Pas de téléphone"}
+            </div>
+          </div>
+          <button className="btn btn-secondary btn-sm" style={{marginLeft:"auto"}}
+            onClick={()=>{setEdit(!edit);setTmp(info);}}>
+            {edit?"Annuler":"✏️ Modifier"}
+          </button>
+        </div>
+        <hr className="divider"/>
+
+        {edit?(
+          <>
+            <div className="form-group">
+              <label className="form-label">Nom de la pharmacie</label>
+              <input className="form-input" value={tmp.nom} onChange={e=>set("nom",e.target.value)}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Numéro de téléphone</label>
+              <input className="form-input" type="tel" placeholder="699 123 456" value={tmp.tel} onChange={e=>set("tel",e.target.value)}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Quartier</label>
+              <select className="form-input" value={tmp.quartier} onChange={e=>set("quartier",e.target.value)}>
+                <option value="">Sélectionner...</option>
+                {QUARTIERS.map(q=><option key={q} value={q}>{q}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Adresse précise</label>
+              <input className="form-input" placeholder="ex: Face au marché central" value={tmp.adresse} onChange={e=>set("adresse",e.target.value)}/>
+            </div>
+            <div className="grid-2">
+              <div className="form-group">
+                <label className="form-label">Heure d'ouverture</label>
+                <input className="form-input" type="time" value={tmp.ouverture} onChange={e=>set("ouverture",e.target.value)}/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Heure de fermeture</label>
+                <input className="form-input" type="time" value={tmp.fermeture} onChange={e=>set("fermeture",e.target.value)}/>
+              </div>
+            </div>
+            <button className="btn btn-primary btn-full" onClick={sauvegarder} disabled={saving}>
+              {saving?"⏳ Enregistrement...":"✅ Enregistrer les modifications"}
+            </button>
+          </>
+        ):(
+          <>
+            {[
+              {ico:"📛",lbl:"Nom",          val:info.nom||"—"},
+              {ico:"📞",lbl:"Téléphone",    val:info.tel||"— (À renseigner !)"},
+              {ico:"🏘",lbl:"Quartier",     val:info.quartier||"—"},
+              {ico:"📍",lbl:"Adresse",      val:info.adresse||"—"},
+              {ico:"🕐",lbl:"Horaires",     val:(info.ouverture||"07:00")+" – "+(info.fermeture||"22:00")},
+            ].map((r,i)=>(
+              <div key={i} className="info-row">
+                <span className="info-lbl">{r.ico} {r.lbl}</span>
+                <span className="info-val" style={{color:r.lbl==="Téléphone"&&!info.tel?"#DC2626":undefined}}>
+                  {r.val}
+                </span>
+              </div>
+            ))}
+            {!info.tel&&(
+              <div style={{background:"#FEF2F2",border:"1px solid #FCA5A5",borderRadius:8,padding:"10px 14px",marginTop:12,fontSize:"0.8rem",color:"#991B1B"}}>
+                ⚠️ <strong>Téléphone manquant</strong> — Les patients ne peuvent pas vous appeler. Cliquez sur "Modifier" pour l'ajouter.
+              </div>
+            )}
+            <div className="mt16">
+              <div className="alert alert-success">
+                <span className="alert-ico">🔥</span>
+                <span><strong>Synchronisé en temps réel</strong> — Toute modification est visible immédiatement par les patients de Yaoundé</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
