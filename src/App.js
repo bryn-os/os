@@ -1961,6 +1961,7 @@ function ResultatsPatient({ recherche, setPage, isDemoMode, user }) {
   },[]);
 
   useEffect(()=>{
+    const run = async () => {
     setLoading(true);
 
     // ── MODE DÉMO OFFLINE ──────────────────────────────────────────────────
@@ -2016,6 +2017,7 @@ function ResultatsPatient({ recherche, setPage, isDemoMode, user }) {
       setResultats(found);
       setLoading(false);
     }).catch(()=>setLoading(false));
+    }; run();
   },[fbReady,recherche,userPos,isDemoMode]);
 
   const catalogueMatch = CATALOGUE_MEDICAMENTS.filter(m=>
