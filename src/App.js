@@ -2980,6 +2980,37 @@ function PageAdmin({ setPage }) {
     await getDB().ref("pharmacies/"+pharmacieId).update({statut:"verifie"});
   };
 
+  const supprimerPharmacie = async(pharmacieId, nom)=>{
+    const confirmation = window.prompt(
+      `⚠️ SUPPRESSION DÉFINITIVE
+
+Tapez le nom exact de la pharmacie pour confirmer :
+"${nom}"`
+    );
+    if(confirmation !== nom){
+      if(confirmation !== null) alert("Nom incorrect. Suppression annulée.");
+      return;
+    }
+    setActionLoading(pharmacieId);
+    try{
+      // Supprimer toutes les données de la pharmacie
+      await Promise.all([
+        getDB().ref("pharmacies/"+pharmacieId).remove(),
+        getDB().ref("stock/"+pharmacieId).remove(),
+        getDB().ref("signalements/"+pharmacieId).remove(),
+        getDB().ref("rappels/"+pharmacieId).remove(),
+        getDB().ref("reservations/"+pharmacieId).remove(),
+      ]);
+      // Marquer la notification liée comme lue
+      const notif = notifications.find(n=>n.pharmacieId===pharmacieId);
+      if(notif) await getDB().ref("admin_notifications/"+notif.key).remove();
+      alert(`✅ Pharmacie "${nom}" supprimée définitivement.`);
+    }catch(e){
+      alert("Erreur lors de la suppression : "+e.message);
+    }
+    setActionLoading("");
+  };
+
   useEffect(()=>{
     if(!fbReady||!auth)return;
     const r=getDB().ref("pharmacies");
@@ -3087,8 +3118,14 @@ function PageAdmin({ setPage }) {
                     <button
                       onClick={()=>rejeterPharmacie(notif.pharmacieId)}
                       disabled={actionLoading===notif.pharmacieId}
-                      style={{background:"#DC2626",color:"white",border:"none",padding:"8px 16px",borderRadius:99,fontWeight:700,cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish"}}>
+                      style={{background:"#F59E0B",color:"white",border:"none",padding:"8px 16px",borderRadius:99,fontWeight:700,cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish"}}>
                       🚫 Rejeter
+                    </button>
+                    <button
+                      onClick={()=>supprimerPharmacie(notif.pharmacieId, notif.nom)}
+                      disabled={actionLoading===notif.pharmacieId}
+                      style={{background:"#DC2626",color:"white",border:"none",padding:"8px 16px",borderRadius:99,fontWeight:700,cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish"}}>
+                      🗑 Supprimer
                     </button>
                   </div>
                 </div>
@@ -3133,8 +3170,15 @@ function PageAdmin({ setPage }) {
                     <td>
                       <div style={{display:"flex",gap:4"}}>
                         {ph.statut!=="verifie"&&<button onClick={()=>validerPharmacie(ph.uid,ph.nom)} style={{background:"#059669",color:"white",border:"none",padding:"3px 8px",borderRadius:6,cursor:"pointer",fontSize:"0.72rem"}}>✅</button>}
-                        {ph.statut!=="suspendu"&&<button onClick={()=>suspendre(ph.uid)} style={{background:"#DC2626",color:"white",border:"none",padding:"3px 8px",borderRadius:6,cursor:"pointer",fontSize:"0.72rem"}}>🚫</button>}
+                        {ph.statut!=="suspendu"&&<button onClick={()=>suspendre(ph.uid)} style={{background:"#F59E0B",color:"white",border:"none",padding:"3px 8px",borderRadius:6,cursor:"pointer",fontSize:"0.72rem"}}>🚫</button>}
                         {ph.statut==="suspendu"&&<button onClick={()=>reactiver(ph.uid)} style={{background:"#0A7B6C",color:"white",border:"none",padding:"3px 8px",borderRadius:6,cursor:"pointer",fontSize:"0.72rem"}}>↺</button>}
+                        <button
+                          onClick={()=>supprimerPharmacie(ph.uid, ph.nom)}
+                          disabled={actionLoading===ph.uid}
+                          title="Supprimer définitivement"
+                          style={{background:"#DC2626",color:"white",border:"none",padding:"3px 8px",borderRadius:6,cursor:"pointer",fontSize:"0.72rem"}}>
+                          {actionLoading===ph.uid?"⏳":"🗑"}
+                        </button>
                       </div>
                     </td>
                   </tr>
