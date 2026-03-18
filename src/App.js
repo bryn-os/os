@@ -1182,6 +1182,18 @@ function AuthScreen({ onAuth }) {
     if(!password||password.length<6){setError("Mot de passe minimum 6 caractères.");return;}
     setError(""); setLoading(true);
     try{
+      // Anti-spam : vérifier que le téléphone n'est pas déjà utilisé
+      const telSnap = await getDB().ref("pharmacies").orderByChild("tel").equalTo(tel.trim()).once("value");
+      if(telSnap.exists()){
+        setError("Ce numéro de téléphone est déjà utilisé par une autre pharmacie.");
+        setLoading(false); return;
+      }
+      // Vérifier que le nom n'existe pas déjà
+      const nomSnap = await getDB().ref("pharmacies").orderByChild("nom").equalTo(nom.trim()).once("value");
+      if(nomSnap.exists()){
+        setError("Une pharmacie avec ce nom existe déjà sur Mediconline.");
+        setLoading(false); return;
+      }
       const cred = await getAuth().createUserWithEmailAndPassword(email,password);
       const uid  = cred.user.uid;
       // Coordonnées approx selon quartier
@@ -1633,9 +1645,697 @@ function AuthPatient({ onAuth, onSkip }) {
   );
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ⭐ SYSTÈME D'AVIS ET NOTES SUR LES PHARMACIES
+// ══════════════════════════════════════════════════════════════════════════════
+function useAvisPharmacie(pharmacieId, fbReady) {
+  const [avis, setAvis] = useState([]);
+  const [moyenne, setMoyenne] = useState(0);
+  const [nbAvis, setNbAvis] = useState(0);
+
+  useEffect(()=>{
+    if(!fbReady||!pharmacieId) return;
+    const ref = getDB().ref("avis/"+pharmacieId);
+    ref.on("value", snap=>{
+      if(!snap.exists()){ setAvis([]); setMoyenne(0); setNbAvis(0); return; }
+      const list = Object.entries(snap.val()).map(([k,v])=>({...v,key:k}));
+      setAvis(list.sort((a,b)=>b.date-a.date).slice(0,20));
+      const moy = list.reduce((s,a)=>s+a.note,0)/list.length;
+      setMoyenne(Math.round(moy*10)/10);
+      setNbAvis(list.length);
+    });
+    return()=>ref.off();
+  },[fbReady,pharmacieId]);
+
+  return {avis,moyenne,nbAvis};
+}
+
+function EtoilesAvis({ note, editable=false, onChange }) {
+  const [hover,setHover] = useState(0);
+  return(
+    <div style={{display:"flex",gap:2}}>
+      {[1,2,3,4,5].map(i=>(
+        <span key={i}
+          style={{fontSize:editable?"1.4rem":"1rem",cursor:editable?"pointer":"default",
+            color:(hover||note)>=i?"#F59E0B":"#D1D5DB",transition:"color 0.1s"}}
+          onMouseEnter={()=>editable&&setHover(i)}
+          onMouseLeave={()=>editable&&setHover(0)}
+          onClick={()=>editable&&onChange&&onChange(i)}>★</span>
+      ))}
+    </div>
+  );
+}
+
+function FormulaireAvis({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
+  const [note,setNote]       = useState(0);
+  const [commentaire,setCommentaire] = useState("");
+  const [loading,setLoading] = useState(false);
+  const [erreur,setErreur]   = useState("");
+
+  const soumettre = async()=>{
+    if(note===0){ setErreur("Veuillez donner une note."); return; }
+    setLoading(true);
+    const userId = user?.uid || ("anon_"+Date.now());
+    // Vérifier si déjà noté
+    const existing = await getDB().ref("avis/"+pharmacieId).orderByChild("userId").equalTo(userId).once("value");
+    if(existing.exists()){
+      setErreur("Vous avez déjà noté cette pharmacie.");
+      setLoading(false); return;
+    }
+    await getDB().ref("avis/"+pharmacieId).push({
+      note, commentaire:commentaire.trim(),
+      userId, userNom: user?.nom||user?.email||"Patient anonyme",
+      pharmacieNom, date:Date.now()
+    });
+    setLoading(false);
+    onClose();
+  };
+
+  return(
+    <div style={{padding:"16px",background:"#F9FAFB",borderRadius:12,marginTop:12,border:"1px solid #E5E7EB"}}>
+      <div style={{fontWeight:700,fontSize:"0.9rem",color:"var(--navy)",marginBottom:12}}>
+        ⭐ Donner mon avis sur {pharmacieNom}
+      </div>
+      {erreur&&<div style={{color:"#DC2626",fontSize:"0.8rem",marginBottom:8}}>{erreur}</div>}
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:"0.8rem",color:"var(--grey-text)",marginBottom:4}}>Ma note *</div>
+        <EtoilesAvis note={note} editable onChange={setNote}/>
+      </div>
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:"0.8rem",color:"var(--grey-text)",marginBottom:4}}>Commentaire (optionnel)</div>
+        <textarea className="form-input" rows={3} maxLength={200}
+          placeholder="Votre expérience avec cette pharmacie..."
+          value={commentaire} onChange={e=>setCommentaire(e.target.value)}
+          style={{resize:"none",fontFamily:"Mulish",fontSize:"0.83rem"}}/>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button className="btn btn-primary btn-sm" onClick={soumettre} disabled={loading}>
+          {loading?"⏳ Envoi...":"✅ Soumettre"}
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={onClose}>Annuler</button>
+      </div>
+    </div>
+  );
+}
+
+function SectionAvis({ pharmacieId, pharmacieNom, user, fbReady }) {
+  const {avis,moyenne,nbAvis} = useAvisPharmacie(pharmacieId, fbReady);
+  const [showForm,setShowForm] = useState(false);
+
+  return(
+    <div style={{marginTop:12,borderTop:"1px solid var(--grey-border)",paddingTop:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <EtoilesAvis note={Math.round(moyenne)}/>
+          {nbAvis>0?(
+            <span style={{fontSize:"0.78rem",color:"var(--grey-text)"}}>
+              <strong style={{color:"var(--navy)"}}>{moyenne}</strong>/5 · {nbAvis} avis
+            </span>
+          ):(
+            <span style={{fontSize:"0.78rem",color:"var(--grey-text)"}}>Pas encore d'avis</span>
+          )}
+        </div>
+        <button onClick={()=>setShowForm(f=>!f)}
+          style={{background:"none",border:"1px solid var(--teal)",color:"var(--teal)",
+            padding:"4px 12px",borderRadius:99,fontSize:"0.75rem",cursor:"pointer",fontWeight:700}}>
+          {showForm?"Annuler":"⭐ Donner mon avis"}
+        </button>
+      </div>
+      {showForm&&<FormulaireAvis pharmacieId={pharmacieId} pharmacieNom={pharmacieNom}
+        user={user} fbReady={fbReady} onClose={()=>setShowForm(false)}/>}
+      {avis.slice(0,3).map((a,i)=>(
+        <div key={i} style={{marginTop:8,padding:"8px 10px",background:"#F9FAFB",borderRadius:8}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <EtoilesAvis note={a.note}/>
+              <span style={{fontSize:"0.75rem",fontWeight:700,color:"var(--navy)"}}>{a.userNom}</span>
+            </div>
+            <span style={{fontSize:"0.7rem",color:"var(--grey-text)"}}>
+              {new Date(a.date).toLocaleDateString("fr-FR")}
+            </span>
+          </div>
+          {a.commentaire&&<div style={{fontSize:"0.78rem",color:"var(--grey-text)",marginTop:3,fontStyle:"italic"}}>"{a.commentaire}"</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // 🏥 COMPOSANT CARTE RÉSULTAT — avec signalement stock incorrect
 // ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// ⭐ SYSTÈME D'AVIS ET NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+async function publierAvis(pharmacieId, userId, note, commentaire, fbReady) {
+  if(!fbReady) return false;
+  const avisId = "avis_"+userId+"_"+Date.now();
+  await getDB().ref("avis/"+pharmacieId+"/"+avisId).set({
+    userId, note, commentaire: commentaire.trim(),
+    date: Date.now(), lu: false
+  });
+  // Recalculer la note moyenne
+  const snap = await getDB().ref("avis/"+pharmacieId).once("value");
+  if(snap.exists()){
+    const all = Object.values(snap.val());
+    const moyenne = all.reduce((s,a)=>s+(a.note||0),0)/all.length;
+    await getDB().ref("pharmacies/"+pharmacieId).update({
+      noteMoyenne: Math.round(moyenne*10)/10,
+      nbAvis: all.length
+    });
+  }
+  return true;
+}
+
+function EtoileNote({ note, max=5, taille=16, editable=false, onChange }) {
+  const [hover, setHover] = useState(0);
+  return(
+    <div style={{display:"flex",gap:2,alignItems:"center"}}>
+      {Array.from({length:max},(_,i)=>{
+        const filled = (hover||note) > i;
+        return(
+          <span key={i}
+            onClick={editable?()=>onChange&&onChange(i+1):undefined}
+            onMouseEnter={editable?()=>setHover(i+1):undefined}
+            onMouseLeave={editable?()=>setHover(0):undefined}
+            style={{fontSize:taille,cursor:editable?"pointer":"default",
+              color:filled?"#F59E0B":"#D1D5DB",lineHeight:1}}>★</span>
+        );
+      })}
+    </div>
+  );
+}
+
+function SectionAvis({ pharmacieId, pharmacieNom, user, fbReady }) {
+  const [avis, setAvis]           = useState([]);
+  const [showForm, setShowForm]   = useState(false);
+  const [maNote, setMaNote]       = useState(0);
+  const [monComm, setMonComm]     = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [deja, setDeja]           = useState(false);
+  const [moyenne, setMoyenne]     = useState(0);
+
+  useEffect(()=>{
+    if(!fbReady||!pharmacieId) return;
+    getDB().ref("avis/"+pharmacieId).orderByChild("date").limitToLast(10).on("value",snap=>{
+      if(snap.exists()){
+        const list = Object.values(snap.val()).reverse();
+        setAvis(list);
+        const moy = list.reduce((s,a)=>s+(a.note||0),0)/list.length;
+        setMoyenne(Math.round(moy*10)/10);
+        if(user?.uid) setDeja(list.some(a=>a.userId===user.uid));
+      }
+    });
+    return()=>getDB().ref("avis/"+pharmacieId).off();
+  },[fbReady,pharmacieId,user]);
+
+  const soumettre = async()=>{
+    if(maNote===0){alert("Donnez une note entre 1 et 5 étoiles.");return;}
+    if(!user){alert("Connectez-vous pour laisser un avis.");return;}
+    setLoading(true);
+    await publierAvis(pharmacieId, user.uid, maNote, monComm, fbReady);
+    setShowForm(false); setMaNote(0); setMonComm(""); setDeja(true);
+    setLoading(false);
+  };
+
+  return(
+    <div style={{marginTop:8,borderTop:"1px solid var(--grey-border)",paddingTop:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <EtoileNote note={moyenne} taille={14}/>
+          <span style={{fontWeight:700,fontSize:"0.82rem",color:"var(--navy)"}}>{moyenne>0?moyenne+" / 5":"Pas encore d'avis"}</span>
+          {avis.length>0&&<span style={{fontSize:"0.72rem",color:"var(--grey-text)"}}>({avis.length} avis)</span>}
+        </div>
+        {!deja&&user&&<button onClick={()=>setShowForm(f=>!f)} style={{fontSize:"0.72rem",background:"none",border:"1px solid var(--grey-border)",borderRadius:99,padding:"3px 10px",cursor:"pointer",color:"var(--teal)",fontWeight:600}}>
+          ✏️ Laisser un avis
+        </button>}
+      </div>
+      {showForm&&(
+        <div style={{background:"#F9FAFB",borderRadius:10,padding:12,marginBottom:10}}>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:"0.78rem",fontWeight:600,color:"var(--navy)",marginBottom:4}}>Votre note</div>
+            <EtoileNote note={maNote} taille={24} editable onChange={setMaNote}/>
+          </div>
+          <textarea value={monComm} onChange={e=>setMonComm(e.target.value)}
+            placeholder="Votre commentaire (optionnel)..."
+            style={{width:"100%",border:"1px solid var(--grey-border)",borderRadius:8,padding:"8px 10px",fontSize:"0.8rem",resize:"none",height:70,fontFamily:"Mulish",outline:"none"}}/>
+          <div style={{display:"flex",gap:8,marginTop:8}}>
+            <button onClick={soumettre} disabled={loading||maNote===0} style={{background:"var(--teal)",color:"white",border:"none",padding:"6px 16px",borderRadius:99,cursor:"pointer",fontWeight:700,fontSize:"0.8rem",fontFamily:"Mulish"}}>
+              {loading?"⏳...":"✅ Publier"}
+            </button>
+            <button onClick={()=>setShowForm(false)} style={{background:"none",border:"1px solid var(--grey-border)",padding:"6px 12px",borderRadius:99,cursor:"pointer",fontSize:"0.8rem",fontFamily:"Mulish"}}>Annuler</button>
+          </div>
+        </div>
+      )}
+      {avis.slice(0,3).map((a,i)=>(
+        <div key={i} style={{padding:"6px 0",borderBottom:"1px solid var(--grey-border)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <EtoileNote note={a.note} taille={11}/>
+            <span style={{fontSize:"0.7rem",color:"var(--grey-text)"}}>{new Date(a.date).toLocaleDateString("fr-FR")}</span>
+          </div>
+          {a.commentaire&&<div style={{fontSize:"0.78rem",color:"var(--navy)",marginTop:2}}>{a.commentaire}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Système d'avis et notes ─────────────────────────────────────────────────
+function EtoilesNote({ note, max=5, size=14 }) {
+  return(
+    <span style={{display:"inline-flex",gap:1}}>
+      {Array.from({length:max},(_,i)=>(
+        <span key={i} style={{fontSize:size,color:i<Math.round(note)?"#F59E0B":"#D1D5DB"}}>★</span>
+      ))}
+    </span>
+  );
+}
+
+function AvisModal({ pharmacieId, pharmacieNom, user, onClose, fbReady }) {
+  const [note,setNote]       = useState(0);
+  const [hover,setHover]     = useState(0);
+  const [commentaire,setCommentaire] = useState("");
+  const [loading,setLoading] = useState(false);
+  const [done,setDone]       = useState(false);
+
+  const soumettre = async()=>{
+    if(note===0){ alert("Donnez au moins 1 étoile."); return; }
+    setLoading(true);
+    const avisId = (user?.uid||"anon")+"_"+Date.now();
+    const data = {
+      userId: user?.uid||"anonyme",
+      userName: user?.nom||user?.email||"Patient anonyme",
+      note, commentaire: commentaire.trim(),
+      date: Date.now(), pharmacieId
+    };
+    if(fbReady){
+      await getDB().ref("avis/"+pharmacieId+"/"+avisId).set(data);
+      // Recalculer note moyenne
+      const snap = await getDB().ref("avis/"+pharmacieId).once("value");
+      if(snap.exists()){
+        const vals = Object.values(snap.val());
+        const moy = vals.reduce((s,a)=>s+a.note,0)/vals.length;
+        await getDB().ref("pharmacies/"+pharmacieId).update({
+          noteMoyenne: Math.round(moy*10)/10,
+          nbAvis: vals.length
+        });
+      }
+    }
+    setDone(true);
+    setLoading(false);
+  };
+
+  if(done) return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"white",borderRadius:16,padding:32,maxWidth:320,width:"100%",textAlign:"center"}}>
+        <div style={{fontSize:"2.5rem",marginBottom:8}}>🎉</div>
+        <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1.1rem",color:"#0D2B3E",marginBottom:8}}>Merci pour votre avis !</div>
+        <div style={{color:"#6B7280",fontSize:"0.85rem",marginBottom:20}}>Votre avis aide d'autres patients à choisir.</div>
+        <button onClick={onClose} style={{background:"#0A7B6C",color:"white",border:"none",padding:"10px 24px",borderRadius:99,fontWeight:700,cursor:"pointer",fontFamily:"Mulish"}}>Fermer</button>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"white",borderRadius:16,padding:24,maxWidth:360,width:"100%"}}>
+        <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1rem",color:"#0D2B3E",marginBottom:4}}>⭐ Noter {pharmacieNom}</div>
+        <div style={{color:"#6B7280",fontSize:"0.8rem",marginBottom:16}}>Votre expérience aide les autres patients</div>
+        {/* Étoiles interactives */}
+        <div style={{display:"flex",gap:6,marginBottom:16,justifyContent:"center"}}>
+          {[1,2,3,4,5].map(s=>(
+            <span key={s}
+              onMouseEnter={()=>setHover(s)}
+              onMouseLeave={()=>setHover(0)}
+              onClick={()=>setNote(s)}
+              style={{fontSize:"2.2rem",cursor:"pointer",color:s<=(hover||note)?"#F59E0B":"#D1D5DB",transition:"color 0.1s"}}>
+              ★
+            </span>
+          ))}
+        </div>
+        <div style={{textAlign:"center",fontSize:"0.82rem",color:"#0A7B6C",fontWeight:700,marginBottom:12,minHeight:20}}>
+          {["","Mauvais","Passable","Bien","Très bien","Excellent !"][hover||note]}
+        </div>
+        <textarea
+          placeholder="Commentaire optionnel (service, disponibilité, accueil...)"
+          value={commentaire}
+          onChange={e=>setCommentaire(e.target.value)}
+          style={{width:"100%",border:"1px solid #E5E7EB",borderRadius:8,padding:"10px 12px",fontFamily:"Mulish",fontSize:"0.82rem",resize:"none",minHeight:80,boxSizing:"border-box"}}
+        />
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          <button onClick={onClose} style={{flex:1,background:"#F3F4F6",color:"#6B7280",border:"none",padding:"10px",borderRadius:99,cursor:"pointer",fontFamily:"Mulish",fontWeight:600}}>Annuler</button>
+          <button onClick={soumettre} disabled={loading||note===0} style={{flex:2,background:"#0A7B6C",color:"white",border:"none",padding:"10px",borderRadius:99,fontWeight:700,cursor:"pointer",fontFamily:"Mulish"}}>
+            {loading?"⏳ Envoi...":"⭐ Soumettre"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ⭐ SYSTÈME D'AVIS ET NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+async function soumettreAvis(pharmacieUid, userId, userEmail, note, commentaire, fbReady) {
+  if(!fbReady) return false;
+  if(!userId) return false;
+  const avisId = "avis_"+userId+"_"+pharmacieUid;
+  await getDB().ref("avis/"+pharmacieUid+"/"+avisId).set({
+    userId, userEmail: userEmail||"anonyme",
+    note, commentaire: commentaire.trim(),
+    date: Date.now(),
+  });
+  // Recalculer la moyenne
+  const snap = await getDB().ref("avis/"+pharmacieUid).once("value");
+  if(snap.exists()){
+    const avis = Object.values(snap.val());
+    const moyenne = avis.reduce((s,a)=>s+(a.note||0),0)/avis.length;
+    await getDB().ref("pharmacies/"+pharmacieUid).update({
+      noteMoyenne: Math.round(moyenne*10)/10,
+      nbAvis: avis.length,
+    });
+  }
+  return true;
+}
+
+function EtoilesNote({ note, taille=16, onClick=null }) {
+  return(
+    <span style={{display:"inline-flex",gap:1,cursor:onClick?"pointer":"default"}}>
+      {[1,2,3,4,5].map(i=>(
+        <span key={i} onClick={()=>onClick&&onClick(i)}
+          style={{fontSize:taille,color:i<=note?"#F59E0B":"#D1D5DB",transition:"color 0.1s"}}>
+          ★
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ModalAvis({ pharmacieUid, pharmacieNom, user, fbReady, onClose }) {
+  const [note,setNote]=useState(0);
+  const [commentaire,setCommentaire]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [done,setDone]=useState(false);
+
+  const envoyer = async()=>{
+    if(note===0){alert("Donnez une note de 1 à 5 étoiles.");return;}
+    setLoading(true);
+    await soumettreAvis(pharmacieUid, user?.uid, user?.email, note, commentaire, fbReady);
+    setDone(true);
+    setLoading(false);
+    setTimeout(onClose, 1500);
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"white",borderRadius:16,padding:24,maxWidth:360,width:"100%"}}>
+        {done?(
+          <div style={{textAlign:"center",padding:"16px 0"}}>
+            <div style={{fontSize:"2.5rem"}}>🎉</div>
+            <div style={{fontWeight:700,color:"#0D2B3E",marginTop:8}}>Merci pour votre avis !</div>
+          </div>
+        ):(
+          <>
+            <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1rem",color:"#0D2B3E",marginBottom:4}}>⭐ Donner un avis</div>
+            <div style={{fontSize:"0.82rem",color:"#6B7280",marginBottom:16}}>{pharmacieNom}</div>
+            <div style={{marginBottom:16,textAlign:"center"}}>
+              <EtoilesNote note={note} taille={32} onClick={setNote}/>
+              <div style={{fontSize:"0.78rem",color:"#6B7280",marginTop:6}}>
+                {["","Très mauvais","Mauvais","Correct","Bien","Excellent"][note]}
+              </div>
+            </div>
+            <textarea
+              style={{width:"100%",borderRadius:8,border:"1px solid #E5E7EB",padding:"10px",fontSize:"0.85rem",fontFamily:"Mulish",resize:"vertical",minHeight:80,outline:"none",boxSizing:"border-box"}}
+              placeholder="Votre commentaire (optionnel)..."
+              value={commentaire}
+              onChange={e=>setCommentaire(e.target.value)}
+            />
+            <div style={{display:"flex",gap:8,marginTop:12}}>
+              <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:99,border:"1px solid #E5E7EB",background:"white",cursor:"pointer",fontFamily:"Mulish"}}>Annuler</button>
+              <button onClick={envoyer} disabled={loading||note===0} style={{flex:2,padding:"10px",borderRadius:99,border:"none",background:"#0A7B6C",color:"white",fontWeight:700,cursor:"pointer",fontFamily:"Mulish",opacity:note===0?0.5:1}}>
+                {loading?"⏳...":"✅ Publier l'avis"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📅 AUDIT TRAIL — Historique des modifications de stock
+// ══════════════════════════════════════════════════════════════════════════════
+async function logAuditStock(pharmacieUid, pharmacieNom, action, details, fbReady) {
+  if(!fbReady) return;
+  try{
+    await getDB().ref("audit/"+pharmacieUid).push({
+      action,       // "ajout" | "modification" | "suppression" | "import"
+      details,      // ex: "Paracétamol 500mg — prix: 50F → 60F"
+      pharmacieNom,
+      date: Date.now(),
+    });
+  }catch(e){ console.warn("audit log failed", e); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🛡️ PROTECTION FAUX COMPTES — Détection patterns suspects
+// ══════════════════════════════════════════════════════════════════════════════
+function detecterCompteSupect(nom, tel, email) {
+  const alertes = [];
+  // Nom trop court ou générique
+  if(nom.length < 5) alertes.push("Nom trop court");
+  if(/^(test|fake|demo|pharmacie\s*\d+|ph\d+)$/i.test(nom)) alertes.push("Nom suspect");
+  // Email jetable connu
+  const emailsJetables = ["mailinator","guerrillamail","tempmail","yopmail","sharklasers","throwam"];
+  if(emailsJetables.some(d=>email.includes(d))) alertes.push("Email jetable");
+  // Téléphone invalide pour le Cameroun
+  const telClean = tel.replace(/[^0-9]/g,"");
+  if(telClean.length < 9) alertes.push("Téléphone trop court");
+  if(!/^(6[5-9]\d{7}|2[23]\d{7}|237\d{9})$/.test(telClean)) alertes.push("Format téléphone non camerounais");
+  return alertes;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ⭐ SYSTÈME D'AVIS ET NOTES SUR LES PHARMACIES
+// ══════════════════════════════════════════════════════════════════════════════
+async function soumettreAvis(pharmacieId, pharmacieNom, note, commentaire, user, fbReady) {
+  if(!fbReady) return false;
+  const uid = user?.uid || ("anon_"+Date.now());
+  const avisId = uid+"_"+pharmacieId;
+  // Un seul avis par utilisateur par pharmacie
+  const existing = await getDB().ref("avis/"+pharmacieId+"/"+avisId).once("value");
+  if(existing.exists()) return "already";
+  await getDB().ref("avis/"+pharmacieId+"/"+avisId).set({
+    userId: uid,
+    userEmail: user?.email||"Anonyme",
+    note,
+    commentaire: commentaire.trim(),
+    pharmacieId,
+    pharmacieNom,
+    date: Date.now(),
+  });
+  // Mettre à jour la note moyenne
+  const allAvis = await getDB().ref("avis/"+pharmacieId).once("value");
+  if(allAvis.exists()) {
+    const notes = Object.values(allAvis.val()).map(a=>a.note||0);
+    const moyenne = notes.reduce((a,b)=>a+b,0)/notes.length;
+    await getDB().ref("pharmacies/"+pharmacieId).update({
+      noteMoyenne: Math.round(moyenne*10)/10,
+      nbAvis: notes.length,
+    });
+  }
+  return true;
+}
+
+function AvisModal({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
+  const [note, setNote] = useState(0);
+  const [commentaire, setCommentaire] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const soumettre = async()=>{
+    if(note===0){ alert("Veuillez sélectionner une note."); return; }
+    setLoading(true);
+    const res = await soumettreAvis(pharmacieId, pharmacieNom, note, commentaire, user, fbReady);
+    if(res==="already") { alert("Vous avez déjà donné un avis sur cette pharmacie."); }
+    else if(res) setDone(true);
+    setLoading(false);
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"white",borderRadius:16,padding:24,maxWidth:360,width:"100%"}}>
+        {done?(
+          <>
+            <div style={{textAlign:"center",fontSize:"2.5rem",marginBottom:8}}>⭐</div>
+            <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1.1rem",color:"var(--navy)",textAlign:"center",marginBottom:8}}>Merci pour votre avis !</div>
+            <div style={{color:"var(--grey-text)",fontSize:"0.85rem",textAlign:"center",marginBottom:16}}>Votre avis aide les autres patients à choisir leur pharmacie.</div>
+            <button onClick={onClose} style={{width:"100%",background:"var(--teal)",color:"white",border:"none",padding:12,borderRadius:99,fontWeight:700,cursor:"pointer",fontFamily:"Mulish"}}>Fermer</button>
+          </>
+        ):(
+          <>
+            <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1rem",color:"var(--navy)",marginBottom:4}}>⭐ Donner un avis</div>
+            <div style={{color:"var(--grey-text)",fontSize:"0.82rem",marginBottom:16}}>{pharmacieNom}</div>
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:16}}>
+              {[1,2,3,4,5].map(n=>(
+                <span key={n} onClick={()=>setNote(n)} style={{fontSize:"2rem",cursor:"pointer",opacity:n<=note?1:0.3,transition:"opacity 0.15s"}}>⭐</span>
+              ))}
+            </div>
+            <div style={{fontSize:"0.78rem",color:"var(--grey-text)",textAlign:"center",marginBottom:12}}>
+              {note===1?"😞 Très mauvais":note===2?"😐 Mauvais":note===3?"🙂 Correct":note===4?"😊 Bien":note===5?"🤩 Excellent":"Sélectionnez une note"}
+            </div>
+            <textarea
+              value={commentaire}
+              onChange={e=>setCommentaire(e.target.value)}
+              placeholder="Commentaire optionnel... (service, propreté, disponibilité...)"
+              style={{width:"100%",padding:"10px 14px",borderRadius:10,border:"1px solid var(--grey-border)",fontFamily:"Mulish",fontSize:"0.82rem",resize:"none",height:80,boxSizing:"border-box"}}
+            />
+            <div style={{display:"flex",gap:8,marginTop:12}}>
+              <button onClick={onClose} style={{flex:1,background:"#F3F4F6",color:"var(--grey-text)",border:"none",padding:12,borderRadius:99,cursor:"pointer",fontFamily:"Mulish"}}>Annuler</button>
+              <button onClick={soumettre} disabled={loading||note===0} style={{flex:2,background:"var(--teal)",color:"white",border:"none",padding:12,borderRadius:99,fontWeight:700,cursor:"pointer",fontFamily:"Mulish"}}>
+                {loading?"⏳...":"Envoyer mon avis"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EtoilesNote({ note, nb }) {
+  if(!note) return null;
+  const plein = Math.floor(note);
+  const demi  = note - plein >= 0.5;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:4}}>
+      <div style={{display:"flex",gap:1}}>
+        {[1,2,3,4,5].map(i=>(
+          <span key={i} style={{fontSize:"0.85rem",color:i<=plein?"#F59E0B":i===plein+1&&demi?"#F59E0B":"#D1D5DB"}}>
+            {i<=plein?"⭐":i===plein+1&&demi?"⭐":"☆"}
+          </span>
+        ))}
+      </div>
+      <span style={{fontSize:"0.78rem",fontWeight:700,color:"#92400E"}}>{note}</span>
+      {nb&&<span style={{fontSize:"0.72rem",color:"var(--grey-text)"}}>({nb} avis)</span>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ⭐ SYSTÈME D'AVIS ET NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+async function soumettreAvis(pharmacieId, userId, note, commentaire, fbReady) {
+  if(!fbReady) return false;
+  const avisId = "avis_"+userId+"_"+Date.now();
+  await getDB().ref("avis/"+pharmacieId+"/"+avisId).set({
+    userId, note, commentaire: commentaire.trim(),
+    date: Date.now(),
+  });
+  // Recalculer moyenne
+  const snap = await getDB().ref("avis/"+pharmacieId).once("value");
+  if(snap.exists()){
+    const avisListe = Object.values(snap.val());
+    const moyenne = avisListe.reduce((s,a)=>s+(a.note||0),0) / avisListe.length;
+    await getDB().ref("pharmacies/"+pharmacieId).update({
+      noteMoyenne: Math.round(moyenne*10)/10,
+      nbAvis: avisListe.length,
+    });
+  }
+  return true;
+}
+
+function EtoilesNote({ note, editable=false, onChange }) {
+  return(
+    <div style={{display:"flex",gap:2}}>
+      {[1,2,3,4,5].map(i=>(
+        <span key={i}
+          onClick={()=>editable&&onChange&&onChange(i)}
+          style={{fontSize:"1rem",cursor:editable?"pointer":"default",
+            filter:i<=Math.round(note||0)?"none":"grayscale(1) opacity(0.3)"}}>
+          ⭐
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PanneauAvis({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
+  const [avis,setAvis]     = useState([]);
+  const [note,setNote]     = useState(0);
+  const [comment,setComment] = useState("");
+  const [loading,setLoading] = useState(false);
+  const [dejaNote,setDejaNote] = useState(false);
+
+  useEffect(()=>{
+    if(!fbReady||!pharmacieId) return;
+    getDB().ref("avis/"+pharmacieId).orderByChild("date").limitToLast(20).on("value",snap=>{
+      if(snap.exists()) setAvis(Object.values(snap.val()).reverse());
+      else setAvis([]);
+    });
+    // Vérifier si déjà noté
+    if(user?.uid){
+      getDB().ref("avis/"+pharmacieId).orderByChild("userId").equalTo(user.uid).once("value",snap=>{
+        if(snap.exists()) setDejaNote(true);
+      });
+    }
+    return()=>getDB().ref("avis/"+pharmacieId).off();
+  },[fbReady,pharmacieId,user]);
+
+  const soumettre = async()=>{
+    if(note===0){alert("Veuillez choisir une note."); return;}
+    if(!user){alert("Connectez-vous pour laisser un avis."); return;}
+    setLoading(true);
+    const ok = await soumettreAvis(pharmacieId, user.uid, note, comment, fbReady);
+    if(ok){ setDejaNote(true); setComment(""); setNote(0); }
+    setLoading(false);
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div style={{background:"white",borderRadius:"16px 16px 0 0",padding:20,width:"100%",maxWidth:480,maxHeight:"80vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+          <div style={{fontFamily:"Syne",fontWeight:800,fontSize:"1rem",color:"var(--navy)"}}>⭐ Avis — {pharmacieNom}</div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:"1.3rem",cursor:"pointer",color:"var(--grey-text)"}}>✕</button>
+        </div>
+
+        {/* Formulaire avis */}
+        {!dejaNote&&user&&(
+          <div style={{background:"#F4FBF9",borderRadius:10,padding:14,marginBottom:16}}>
+            <div style={{fontSize:"0.82rem",fontWeight:700,color:"var(--navy)",marginBottom:8}}>Votre note</div>
+            <EtoilesNote note={note} editable onChange={setNote}/>
+            <textarea
+              value={comment} onChange={e=>setComment(e.target.value)}
+              placeholder="Votre commentaire (optionnel)..."
+              style={{width:"100%",marginTop:10,padding:"8px 12px",borderRadius:8,border:"1px solid var(--grey-border)",fontSize:"0.82rem",fontFamily:"Mulish",resize:"none",height:70,boxSizing:"border-box"}}
+            />
+            <button onClick={soumettre} disabled={loading||note===0} style={{marginTop:8,background:"var(--teal)",color:"white",border:"none",padding:"8px 20px",borderRadius:99,fontWeight:700,cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish",width:"100%"}}>
+              {loading?"⏳ Envoi...":"✅ Soumettre mon avis"}
+            </button>
+          </div>
+        )}
+        {dejaNote&&<div style={{background:"#F0FDF4",borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:"0.8rem",color:"#065F46"}}>✅ Vous avez déjà laissé un avis pour cette pharmacie.</div>}
+        {!user&&<div style={{background:"#FFF7ED",borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:"0.8rem",color:"#92400E"}}>Connectez-vous pour laisser un avis.</div>}
+
+        {/* Liste avis */}
+        <div style={{fontSize:"0.82rem",fontWeight:700,color:"var(--navy)",marginBottom:8}}>{avis.length} avis</div>
+        {avis.length===0&&<div style={{textAlign:"center",color:"var(--grey-text)",padding:"20px 0",fontSize:"0.82rem"}}>Aucun avis pour l'instant. Soyez le premier !</div>}
+        {avis.map((a,i)=>(
+          <div key={i} style={{borderBottom:"1px solid var(--grey-border)",padding:"10px 0"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+              <EtoilesNote note={a.note}/>
+              <span style={{fontSize:"0.72rem",color:"var(--grey-text)"}}>{new Date(a.date).toLocaleDateString("fr-FR")}</span>
+            </div>
+            {a.commentaire&&<div style={{fontSize:"0.8rem",color:"var(--navy)"}}>{a.commentaire}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Système de réservation ───────────────────────────────────────────────────
 async function creerReservation(r, user, fbReady) {
   if(!fbReady && !r.isDemo) return {ok:false, msg:"Pas de connexion"};
@@ -1697,11 +2397,13 @@ function CarteResultat({ r, i, fbReady, setPage, recherche, user }) {
   const [signalé, setSignalé]         = useState(false);
   const [signalLoading, setSignalLoading] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showAvis, setShowAvis]       = useState(false);
   const [stockDispo, setStockDispo]   = useState(r.qte);
   const [reserved, setReserved]       = useState(false);
   const [resLoading, setResLoading]   = useState(false);
   const [resInfo, setResInfo]         = useState(null);
   const [showResModal, setShowResModal] = useState(false);
+  const [showAvis, setShowAvis] = useState(false);
 
   // Calculer le vrai stock disponible (stock - réservations actives)
   useEffect(()=>{
@@ -1823,6 +2525,13 @@ function CarteResultat({ r, i, fbReady, setPage, recherche, user }) {
           </div>
         </div>
         {i===0&&<span className="best-badge">📍 La plus proche</span>}
+        {r.noteMoyenne&&(
+          <div style={{display:"flex",alignItems:"center",gap:3,marginLeft:"auto"}}>
+            <span style={{fontSize:"0.9rem"}}>⭐</span>
+            <span style={{fontSize:"0.78rem",fontWeight:700,color:"var(--navy)"}}>{r.noteMoyenne}</span>
+            <span style={{fontSize:"0.7rem",color:"var(--grey-text)"}}>({r.nbAvis||0})</span>
+          </div>
+        )}
       </div>
 
       {/* Prix + Stock */}
@@ -1869,6 +2578,52 @@ function CarteResultat({ r, i, fbReady, setPage, recherche, user }) {
             </button>
           )}
           {r.tel&&<button className="btn btn-secondary btn-sm" onClick={()=>window.open("tel:"+r.tel)}>📞 Appeler</button>}
+          <button onClick={()=>setShowAvis(true)} className="btn btn-secondary btn-sm">⭐ Avis</button>
+          {r.tel&&(
+            <button className="btn btn-sm" onClick={()=>{
+              const telClean=r.tel.replace(/[^0-9]/g,"");
+              const msg=encodeURIComponent(`Bonjour, je cherche *${r.nom||recherche}* chez ${r.pharmacieNom}. Est-il disponible ?`);
+              window.open(`https://wa.me/237${telClean}?text=${msg}`,"_blank");
+            }} style={{background:"#25D366",color:"white",border:"none",borderRadius:99,padding:"6px 14px",fontSize:"0.78rem",fontWeight:700,cursor:"pointer",fontFamily:"Mulish"}}>
+              💬 WhatsApp
+            </button>
+          )}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",padding:"6px 12px",borderRadius:99,cursor:"pointer",fontFamily:"Mulish",fontWeight:700,fontSize:"0.78rem"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[\s\-\+]/g,"").replace(/^0/,"")+"?text=Bonjour,%20je%20cherche%20"+encodeURIComponent(r.nom)+",%20est-il%20disponible%20?","_blank")}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",padding:"6px 12px",borderRadius:99,cursor:"pointer",fontWeight:700,fontSize:"0.78rem",fontFamily:"Mulish"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[^0-9]/g,"")+"?text=Bonjour+"+encodeURIComponent(r.pharmacieNom)+",+je+voudrais+savoir+si+vous+avez+"+encodeURIComponent(r.nom)+"+("+r.prix+"+FCFA)+en+stock.+Merci","_blank")}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",padding:"6px 12px",borderRadius:99,cursor:"pointer",fontFamily:"Mulish",fontWeight:700,fontSize:"0.78rem"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[^0-9]/g,"")+"?text=Bonjour%2C+je+cherche+"+encodeURIComponent(r.nom)+" disponible dans votre pharmacie sur Mediconline")}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",borderRadius:99,padding:"6px 12px",cursor:"pointer",fontWeight:700,fontSize:"0.78rem",fontFamily:"Mulish"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[\s\-\+]/g,"").replace(/^0/,"")+"?text=Bonjour, je vous contacte depuis Mediconline pour le médicament : "+encodeURIComponent(r.nom),"_blank")}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&<button className="btn btn-secondary btn-sm" onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[^0-9]/g,"")+"?text=Bonjour%2C%20je%20cherche%20"+encodeURIComponent(r.nom||"un médicament")+".")} style={{background:"#25D366",color:"white",border:"none"}}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",borderRadius:99,padding:"5px 12px",cursor:"pointer",fontFamily:"Mulish",fontWeight:700,fontSize:"0.78rem"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[^0-9]/g,"")+"?text=Bonjour%2C%20je%20cherche%20"+encodeURIComponent(r.nom||"un médicament")+"." ,"_blank")}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&(
+            <button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",padding:"6px 12px",borderRadius:99,cursor:"pointer",fontWeight:700,fontSize:"0.78rem",fontFamily:"Mulish",display:"flex",alignItems:"center",gap:4}}
+              onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[\s\-\+]/g,"").replace(/^237/,"")+"?text=Bonjour%2C%20je%20cherche%20"+encodeURIComponent(r.nom||"un médicament")+".")}
+            >💬 WhatsApp</button>
+          )}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",padding:"8px 12px",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:"0.82rem"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[\s\-+]/g,"").replace(/^0/,"")+"?text="+encodeURIComponent("Bonjour, j'ai vu votre pharmacie sur Mediconline. Est-ce que vous avez "+r.nom+" en stock ? Merci"))}>
+            💬 WhatsApp
+          </button>}
+          {r.tel&&<button className="btn btn-sm" style={{background:"#25D366",color:"white",border:"none",padding:"6px 12px",borderRadius:99,cursor:"pointer",fontWeight:700,fontSize:"0.78rem",fontFamily:"Mulish"}}
+            onClick={()=>window.open("https://wa.me/237"+r.tel.replace(/[\s\-().+]/g,"").replace(/^0/,"")+"?text=Bonjour%2C+je+vous+contacte+via+Mediconline+pour+le+m%C3%A9dicament+"+encodeURIComponent(r.nom),"_blank")}>
+            💬 WhatsApp
+          </button>}
         </div>
 
         {/* Bouton RÉSERVER — le cœur de Mediconline */}
@@ -1895,8 +2650,17 @@ function CarteResultat({ r, i, fbReady, setPage, recherche, user }) {
         )}
       </div>
 
-      {/* Signalement */}
-      <div style={{padding:"4px 16px 10px",borderTop:"1px solid var(--grey-border)"}}>
+      {/* Avis et notes */}
+      <div style={{padding:"4px 16px 12px"}}>
+        <SectionAvis
+          pharmacieId={r.pharmacieUid||r.pharmacieId}
+          pharmacieNom={r.pharmacieNom}
+          user={user}
+          fbReady={fbReady}/>
+      </div>
+
+      {/* Signalement + Avis */}
+      <div style={{padding:"6px 16px 10px",borderTop:"1px solid var(--grey-border)",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:6}}>
         {!signalé?(
           <button
             style={{fontSize:"0.7rem",padding:"2px 8px",background:showConfirm?"#FDECEA":"transparent",
@@ -1907,10 +2671,25 @@ function CarteResultat({ r, i, fbReady, setPage, recherche, user }) {
             {signalLoading?"⏳...":showConfirm?"⚠️ Confirmer le signalement":"🚩 Signaler stock incorrect"}
           </button>
         ):(
-          <span style={{fontSize:"0.7rem",color:"var(--teal)"}}>✅ Signalement envoyé à la pharmacie</span>
+          <span style={{fontSize:"0.7rem",color:"var(--teal)"}}>✅ Signalement envoyé</span>
+        )}
+        {!r.isDemo&&user&&(
+          <button onClick={()=>setShowAvis(true)}
+            style={{fontSize:"0.7rem",padding:"2px 10px",background:"transparent",
+              color:"#F59E0B",border:"1px solid #F59E0B",borderRadius:99,cursor:"pointer",
+              display:"flex",alignItems:"center",gap:3}}>
+            ⭐ Donner un avis
+          </button>
         )}
       </div>
     </div>
+    {showAvis&&<PanneauAvis
+      pharmacieId={r.pharmacieUid||r.pharmacieId}
+      pharmacieNom={r.pharmacieNom}
+      user={user}
+      fbReady={fbReady}
+      onClose={()=>setShowAvis(false)}
+    />}
     </>
   );
 }
@@ -1952,7 +2731,6 @@ function ResultatsPatient({ recherche, setPage, isDemoMode, user }) {
   const [loading,setLoading]=useState(true);
   const [userPos,setUserPos]=useState(null);
 
-  // Géolocalisation silencieuse
   useEffect(()=>{
     navigator.geolocation?.getCurrentPosition(
       pos=>setUserPos([pos.coords.latitude,pos.coords.longitude]),
@@ -1961,7 +2739,7 @@ function ResultatsPatient({ recherche, setPage, isDemoMode, user }) {
   },[]);
 
   useEffect(()=>{
-    const run = async()=>{
+    const run=async()=>{
       setLoading(true);
       try{
         if(isDemoMode){
@@ -2008,89 +2786,149 @@ function ResultatsPatient({ recherche, setPage, isDemoMode, user }) {
         found.sort((a,b)=>a.distance!==b.distance?a.distance-b.distance:a.prix-b.prix);
         setResultats(found);
         setLoading(false);
-      }catch(e){console.error(e);setLoading(false);}
+      }catch(e){
+        console.error(e);
+        setLoading(false);
+      }
     };
     run();
   },[fbReady,recherche,userPos,isDemoMode]);
 
-  const catalogueMatch = CATALOGUE_MEDICAMENTS.filter(m=>
+  const catalogueMatch=CATALOGUE_MEDICAMENTS.filter(m=>
     m.nom.toLowerCase().includes(recherche.toLowerCase())
   );
-  const hasFbResults = resultats.length > 0;
+  const hasFbResults=resultats.length>0;
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📊 DASHBOARD PHARMACIE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📊 PAGE STATISTIQUES PHARMACIE
+// ══════════════════════════════════════════════════════════════════════════════
+function PageStatistiques({ user, stock }) {
+  const fbReady = useFirebaseReady();
+  const [reservations, setReservations] = useState([]);
+  const [historique,   setHistorique]   = useState([]);
+  const [avisStats,    setAvisStats]    = useState({moyenne:0,nb:0});
+
+  useEffect(()=>{
+    if(!fbReady||!user?.uid) return;
+    // Réservations
+    getDB().ref("reservations/"+user.uid).once("value").then(snap=>{
+      if(!snap.exists()){setReservations([]);return;}
+      const all=[];
+      Object.entries(snap.val()).forEach(([itemId,resMap])=>{
+        Object.values(resMap).forEach(r=>all.push(r));
+      });
+      setReservations(all);
+    });
+    // Historique stock
+    getDB().ref("historique_stock/"+user.uid).orderByChild("date").limitToLast(30).once("value").then(snap=>{
+      if(snap.exists()) setHistorique(Object.values(snap.val()).reverse());
+    });
+    // Avis
+    getDB().ref("avis/"+user.uid).once("value").then(snap=>{
+      if(!snap.exists()){setAvisStats({moyenne:0,nb:0});return;}
+      const list=Object.values(snap.val());
+      const moy=list.reduce((s,a)=>s+a.note,0)/list.length;
+      setAvisStats({moyenne:Math.round(moy*10)/10, nb:list.length});
+    });
+  },[fbReady,user]);
+
+  const ruptures   = stock.filter(s=>s.qte===0).length;
+  const stockBas   = stock.filter(s=>s.qte>0&&s.qte<=10).length;
+  const stockOk    = stock.filter(s=>s.qte>10).length;
+  const resActives = reservations.filter(r=>r.expiration>Date.now()&&r.status==="active").length;
+  const resTotales = reservations.length;
+  const valeurStock= stock.reduce((s,m)=>s+(m.prix||0)*(m.qte||0),0);
 
   return(
     <div className="main">
-      <div className="result-toprow">
-        <button className="btn btn-secondary btn-sm" onClick={()=>setPage("accueil")}>← Retour</button>
-        <div><div className="result-title">{recherche}</div>
-        <div className="result-sub">{hasFbResults ? resultats.length+" pharmacie(s) trouvée(s) · Triées par proximité" : "Prix de référence au Cameroun"}</div></div>
+      <div className="page-title mb20">📊 Statistiques</div>
+
+      {/* KPIs principaux */}
+      <div className="grid-4 mb20">
+        {[
+          {ico:"💊",num:stock.length,       lbl:"Médicaments",      bg:"#EBF4FF"},
+          {ico:"🔔",num:resActives,          lbl:"Réservations actives",bg:"#EFF6FF"},
+          {ico:"⭐",num:avisStats.moyenne||"—",lbl:`Note (${avisStats.nb} avis)`,bg:"#FFFBEB"},
+          {ico:"💰",num:valeurStock.toLocaleString("fr-FR"),lbl:"Valeur stock (FCFA)",bg:"#F0FDF4"},
+        ].map((s,i)=>(
+          <div key={i} className="stat-card">
+            <div className="stat-icon" style={{background:s.bg}}>{s.ico}</div>
+            <div className="stat-num" style={{fontSize:"0.95rem"}}>{s.num}</div>
+            <div className="stat-lbl">{s.lbl}</div>
+          </div>
+        ))}
       </div>
 
-      {/* ── RÉSULTATS PHARMACIES ── */}
-      {hasFbResults && (
-        <>
-          <div className="alert alert-success mb16">
-            <span className="alert-ico">📍</span>
-            <span>Pharmacie la plus proche : <strong>{resultats[0].pharmacieNom}</strong> — <strong>{resultats[0].prix} FCFA</strong>{resultats[0].distance<99?" ("+formatDistance(resultats[0].distance)+" de vous)":""}</span>
-          </div>
-          <div className="results-list mb24">
-            {resultats.map((r,i)=>(
-              <CarteResultat key={r.itemId} r={r} i={i} fbReady={fbReady} setPage={setPage} recherche={recherche}/>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* ── RÉSULTATS CATALOGUE (prix de référence) ── */}
-      {catalogueMatch.length > 0 && (
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">📋 {hasFbResults ? "Informations sur ce médicament" : "Prix de référence au Cameroun"}</div>
-            {!hasFbResults && <span className="tag tag-blue">Aucune pharmacie connectée pour l'instant</span>}
-          </div>
-          {!hasFbResults && (
-            <div className="alert alert-warn mb16">
-              <span className="alert-ico">⏳</span>
-              <span>Les pharmacies de Yaoundé rejoignent Mediconline progressivement. En attendant, voici le prix de référence national pour ce médicament.</span>
-            </div>
-          )}
-          {catalogueMatch.map(m=>(
-            <div key={m.id} className="med-card mb16" style={{border:"1.5px solid var(--grey-border)",borderRadius:12,padding:"16px"}}>
-              <div className="med-icon" style={{background:"#F4F6F8",fontSize:"1.4rem",width:48,height:48,flexShrink:0}}>{m.emoji}</div>
-              <div className="med-info" style={{flex:1}}>
-                <div className="med-name">{m.nom}</div>
-                <div className="med-cat">{m.cat}</div>
-              </div>
-              <div className="med-price">
-                <div className="price-from">Prix réf.</div>
-                <div className="price-val">{m.prixRef} FCFA</div>
-              </div>
+      {/* État du stock */}
+      <div className="card mb20">
+        <div className="card-title mb16">📦 État du stock</div>
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          {[
+            {label:"✅ Disponible", count:stockOk,   color:"#059669", bg:"#D1FAE5"},
+            {label:"⚠️ Stock bas",  count:stockBas,  color:"#D97706", bg:"#FEF3C7"},
+            {label:"🚫 Rupture",   count:ruptures,   color:"#DC2626", bg:"#FEE2E2"},
+          ].map((s,i)=>(
+            <div key={i} style={{flex:1,minWidth:100,background:s.bg,borderRadius:10,padding:"12px",textAlign:"center"}}>
+              <div style={{fontWeight:800,fontSize:"1.4rem",color:s.color}}>{s.count}</div>
+              <div style={{fontSize:"0.75rem",color:s.color,fontWeight:600}}>{s.label}</div>
             </div>
           ))}
-          {!hasFbResults && (
-            <div className="alert alert-success mt16">
-              <span className="alert-ico">🏥</span>
-              <span>Vous êtes pharmacien ? <strong onClick={()=>setPage("dashboard")} style={{cursor:"pointer",textDecoration:"underline"}}>Inscrivez-vous gratuitement</strong> et publiez votre stock en temps réel !</span>
+        </div>
+        {/* Barre de progression */}
+        {stock.length>0&&(
+          <div style={{height:12,borderRadius:99,overflow:"hidden",display:"flex",gap:2}}>
+            <div style={{flex:stockOk,background:"#059669",minWidth:stockOk>0?4:0}}/>
+            <div style={{flex:stockBas,background:"#D97706",minWidth:stockBas>0?4:0}}/>
+            <div style={{flex:ruptures,background:"#DC2626",minWidth:ruptures>0?4:0}}/>
+          </div>
+        )}
+      </div>
+
+      {/* Médicaments les plus réservés */}
+      {reservations.length>0&&(
+        <div className="card mb20">
+          <div className="card-title mb12">🔔 Réservations ({resTotales} total)</div>
+          {Object.entries(
+            reservations.reduce((acc,r)=>{
+              acc[r.medicament]=(acc[r.medicament]||0)+1; return acc;
+            },{})
+          ).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([nom,count],i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--grey-border)"}}>
+              <span style={{fontSize:"0.83rem",color:"var(--navy)"}}>{nom}</span>
+              <span style={{background:"#EFF6FF",color:"#1E40AF",borderRadius:99,padding:"2px 10px",fontSize:"0.75rem",fontWeight:700}}>{count}×</span>
             </div>
-          )}
+          ))}
         </div>
       )}
 
-      {catalogueMatch.length===0 && !hasFbResults && (
-        <div className="empty">
-          <div className="empty-ico">😔</div>
-          <h3>Médicament introuvable</h3>
-          <p>Essayez un autre nom ou une orthographe différente.</p>
-          <button className="btn btn-secondary" style={{marginTop:16}} onClick={()=>setPage("accueil")}>← Retour</button>
+      {/* Historique modifications */}
+      {historique.length>0&&(
+        <div className="card">
+          <div className="card-title mb12">📅 Historique des modifications de stock</div>
+          {historique.slice(0,10).map((h,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--grey-border)",flexWrap:"wrap",gap:4}}>
+              <div>
+                <div style={{fontSize:"0.83rem",fontWeight:600,color:"var(--navy)"}}>{h.medicament}</div>
+                <div style={{fontSize:"0.72rem",color:"var(--grey-text)"}}>
+                  Prix: {h.avant?.prix}→{h.apres?.prix} FCFA · Qté: {h.avant?.qte}→{h.apres?.qte}
+                </div>
+              </div>
+              <span style={{fontSize:"0.72rem",color:"var(--grey-text)"}}>
+                {h.date?new Date(h.date).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 📊 DASHBOARD PHARMACIE
-// ══════════════════════════════════════════════════════════════════════════════
 function Dashboard({ stock, setPage, user }) {
   const fbReady=useFirebaseReady();
   const alertes=stock.filter(s=>s.qte<=10&&s.qte>0);
@@ -2331,7 +3169,17 @@ function GestionStock({ stock, user, setPage }) {
   const [query,setQuery]=useState(""); const [editItem,setEditItem]=useState(null); const [editPrix,setEditPrix]=useState(""); const [editQte,setEditQte]=useState("");
   const filtered=stock.filter(s=>s.nom.toLowerCase().includes(query.toLowerCase()));
   const supprimer=async id=>{if(!window.confirm("Supprimer ?"))return;await getDB().ref("stock/"+user.uid+"/"+id).remove();};
-  const sauvegarder=async()=>{await getDB().ref("stock/"+user.uid+"/"+editItem.itemId).update({prix:Number(editPrix),qte:Number(editQte),updatedAt:Date.now()});setEditItem(null);};
+  const sauvegarder=async()=>{
+    const avant={prix:editItem.prix,qte:editItem.qte};
+    const apres={prix:Number(editPrix),qte:Number(editQte)};
+    await getDB().ref("stock/"+user.uid+"/"+editItem.itemId).update({...apres,updatedAt:Date.now()});
+    // Audit trail
+    await getDB().ref("historique_stock/"+user.uid).push({
+      medicament:editItem.nom, avant, apres,
+      date:Date.now(), pharmacieNom:user.nomPharmacie||"Pharmacie"
+    });
+    setEditItem(null);
+  };
   return(
     <div className="main">
       <div className="page-toprow"><div><div className="page-title">Gestion du stock</div><div className="page-sub">{stock.length} médicaments · 🔥 Live</div></div><button className="btn btn-primary" onClick={()=>setPage("ajouter")}>➕ Ajouter</button></div>
@@ -2620,6 +3468,126 @@ function AjouterMedicament({ user, setPage }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ⚙️ PROFIL PHARMACIE
 // ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// 📊 PAGE STATISTIQUES PHARMACIE
+// ══════════════════════════════════════════════════════════════════════════════
+function PageStats({ user, stock }) {
+  const fbReady = useFirebaseReady();
+  const [reservations,setReservations] = useState([]);
+  const [avis,setAvis]               = useState([]);
+  const [signalements,setSignalements] = useState([]);
+  const [vues,setVues]               = useState(0);
+
+  useEffect(()=>{
+    if(!fbReady||!user?.uid) return;
+    // Réservations
+    getDB().ref("reservations/"+user.uid).once("value",snap=>{
+      if(!snap.exists()){setReservations([]);return;}
+      const list=[];
+      Object.values(snap.val()).forEach(itemRes=>{
+        Object.values(itemRes).forEach(res=>list.push(res));
+      });
+      setReservations(list);
+    });
+    // Avis
+    getDB().ref("avis/"+user.uid).once("value",snap=>{
+      if(snap.exists()) setAvis(Object.values(snap.val()));
+    });
+    // Signalements
+    getDB().ref("signalements/"+user.uid).once("value",snap=>{
+      if(snap.exists()) setSignalements(Object.values(snap.val()));
+    });
+    // Vues (incrémenter à chaque visite stats)
+    getDB().ref("stats/"+user.uid+"/vues").transaction(v=>(v||0)+1).then(r=>{
+      setVues(r.snapshot.val()||0);
+    });
+  },[fbReady,user]);
+
+  const noteMoyenne = avis.length ? (avis.reduce((s,a)=>s+(a.note||0),0)/avis.length).toFixed(1) : "—";
+  const ruptures = stock.filter(s=>s.qte===0).length;
+  const stockBas = stock.filter(s=>s.qte>0&&s.qte<=10).length;
+  const resActives = reservations.filter(r=>r.expiration>Date.now()).length;
+
+  // Top 5 médicaments les plus réservés
+  const topMeds = {};
+  reservations.forEach(r=>{ topMeds[r.medicament]=(topMeds[r.medicament]||0)+1; });
+  const top5 = Object.entries(topMeds).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  return(
+    <div className="main">
+      <div className="page-title mb20">📊 Statistiques</div>
+
+      {/* KPIs */}
+      <div className="grid-4 mb20">
+        {[
+          {ico:"👁",  num:vues,          lbl:"Fois vu par patients", bg:"#EBF4FF"},
+          {ico:"🔒",  num:resActives,    lbl:"Réservations actives",  bg:"#E6FAF0"},
+          {ico:"⭐",  num:noteMoyenne,   lbl:"Note moyenne",           bg:"#FFF4E6"},
+          {ico:"💬",  num:avis.length,   lbl:"Avis patients",          bg:"#F3E8FF"},
+        ].map((s,i)=>(
+          <div key={i} className="stat-card">
+            <div className="stat-icon" style={{background:s.bg}}>{s.ico}</div>
+            <div className="stat-num">{s.num}</div>
+            <div className="stat-lbl">{s.lbl}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Stock santé */}
+      <div className="card mb20">
+        <div className="card-header"><div className="card-title">💊 État du stock</div></div>
+        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+          {[
+            {label:"Total médicaments", val:stock.length, color:"var(--teal)"},
+            {label:"En rupture",        val:ruptures,      color:"#DC2626"},
+            {label:"Stock bas (≤10)",   val:stockBas,      color:"#D97706"},
+            {label:"Signalements",      val:signalements.reduce((s,sg)=>s+(sg.count||1),0), color:"#7C3AED"},
+          ].map((s,i)=>(
+            <div key={i} style={{flex:"1 1 120px",background:"#F9FAFB",borderRadius:10,padding:"12px 16px",textAlign:"center"}}>
+              <div style={{fontSize:"1.5rem",fontWeight:800,color:s.color,fontFamily:"Syne"}}>{s.val}</div>
+              <div style={{fontSize:"0.75rem",color:"var(--grey-text)",marginTop:2}}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Top médicaments */}
+      {top5.length>0&&(
+        <div className="card mb20">
+          <div className="card-header"><div className="card-title">🏆 Médicaments les plus demandés</div></div>
+          {top5.map(([nom,count],i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:"1px solid var(--grey-border)"}}>
+              <span style={{fontWeight:800,color:"var(--teal)",fontSize:"0.9rem",minWidth:20}}>#{i+1}</span>
+              <span style={{flex:1,fontSize:"0.85rem",color:"var(--navy)",fontWeight:600}}>{nom}</span>
+              <span style={{background:"#E1F5EE",color:"var(--teal)",padding:"2px 10px",borderRadius:99,fontSize:"0.75rem",fontWeight:700}}>{count} réserv.</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Derniers avis */}
+      {avis.length>0&&(
+        <div className="card">
+          <div className="card-header"><div className="card-title">⭐ Derniers avis patients</div></div>
+          {avis.slice(0,5).map((a,i)=>(
+            <div key={i} style={{padding:"10px 0",borderBottom:"1px solid var(--grey-border)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                {[1,2,3,4,5].map(s=>(
+                  <span key={s} style={{fontSize:"0.85rem",filter:s<=a.note?"none":"grayscale(1) opacity(0.3)"}}>⭐</span>
+                ))}
+                <span style={{fontSize:"0.72rem",color:"var(--grey-text)",marginLeft:4}}>
+                  {new Date(a.date).toLocaleDateString("fr-FR")}
+                </span>
+              </div>
+              {a.commentaire&&<div style={{fontSize:"0.8rem",color:"var(--navy)"}}>{a.commentaire}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProfilPharmacie({ user }) {
   const fbReady = useFirebaseReady();
   const [edit,setEdit]     = useState(false);
@@ -2646,6 +3614,46 @@ function ProfilPharmacie({ user }) {
     });
     return()=>getDB().ref("pharmacies/"+user.uid).off();
   },[user,fbReady]);
+
+  const [gpsLoading,setGpsLoading] = useState(false);
+
+  const geolocalisaer = async()=>{
+    setGpsLoading(true);
+    // Utiliser l'API Nominatim (OpenStreetMap) pour géocoder l'adresse
+    const adresseComplete = `${tmp.adresse||tmp.quartier}, Yaoundé, Cameroun`;
+    try{
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(adresseComplete)}&format=json&limit=1`;
+      const resp = await fetch(url, {headers:{"Accept-Language":"fr"}});
+      const data = await resp.json();
+      if(data&&data.length>0){
+        const {lat,lon} = data[0];
+        setTmp(f=>({...f, lat:parseFloat(lat), lng:parseFloat(lon)}));
+        alert(`✅ Position trouvée !
+Lat: ${parseFloat(lat).toFixed(4)}, Lng: ${parseFloat(lon).toFixed(4)}
+
+Cliquez "Enregistrer" pour sauvegarder.`);
+      } else {
+        // Fallback : coordonnées par quartier
+        const coordsMap = {
+          "Bastos":{lat:3.8820,lng:11.5050},"Centre-ville":{lat:3.8667,lng:11.5167},
+          "Obili":{lat:3.8550,lng:11.5080},"Biyem-Assi":{lat:3.8450,lng:11.4980},
+          "Essos":{lat:3.8710,lng:11.5350},"Nlongkak":{lat:3.8780,lng:11.5220},
+          "Melen":{lat:3.8620,lng:11.5290},"Mvog-Ada":{lat:3.8480,lng:11.5280},
+        };
+        const coords = coordsMap[tmp.quartier];
+        if(coords){
+          setTmp(f=>({...f,...coords}));
+          alert(`📍 Position approximative pour ${tmp.quartier} appliquée.
+Pour plus de précision, ajoutez votre adresse exacte.`);
+        } else {
+          alert("Adresse introuvable. Vérifiez l'adresse et réessayez.");
+        }
+      }
+    }catch(e){
+      alert("Erreur de géolocalisation : "+e.message);
+    }
+    setGpsLoading(false);
+  };
 
   const sauvegarder = async()=>{
     setSaving(true);
@@ -2734,6 +3742,41 @@ function ProfilPharmacie({ user }) {
             <div className="form-group">
               <label className="form-label">Adresse précise</label>
               <input className="form-input" placeholder="ex: Face au marché central" value={tmp.adresse} onChange={e=>set("adresse",e.target.value)}/>
+            </div>
+            <button type="button" onClick={geolocalisaer} disabled={gpsLoading} style={{
+              background:"#0D2B3E",color:"white",border:"none",padding:"8px 16px",
+              borderRadius:99,cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish",fontWeight:700,marginBottom:12
+            }}>
+              {gpsLoading?"⏳ Recherche...":"📍 Localiser automatiquement sur la carte"}
+            </button>
+            {tmp.lat&&tmp.lng&&(
+              <div style={{fontSize:"0.75rem",color:"var(--teal)",marginBottom:8}}>
+                ✅ Position GPS : {tmp.lat?.toFixed(4)}, {tmp.lng?.toFixed(4)}
+              </div>
+            )}
+            <div className="form-group">
+              <label className="form-label">📍 Coordonnées GPS <span style={{color:"var(--grey-text)",fontWeight:400}}>(pour apparaître sur la carte)</span></label>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={()=>{
+                  if(!navigator.geolocation){alert("GPS non disponible");return;}
+                  navigator.geolocation.getCurrentPosition(
+                    pos=>{
+                      set("lat",pos.coords.latitude);
+                      set("lng",pos.coords.longitude);
+                      alert("✅ Position GPS enregistrée !
+Lat: "+pos.coords.latitude.toFixed(5)+"
+Lng: "+pos.coords.longitude.toFixed(5));
+                    },
+                    ()=>alert("Impossible d'obtenir votre position. Activez le GPS.")
+                  );
+                }}>📍 Localiser ma position GPS</button>
+                {tmp.lat&&tmp.lng&&<span style={{fontSize:"0.75rem",color:"var(--teal)",fontWeight:600}}>
+                  ✅ GPS enregistré ({Number(tmp.lat).toFixed(4)}, {Number(tmp.lng).toFixed(4)})
+                </span>}
+              </div>
+              <div style={{fontSize:"0.72rem",color:"var(--grey-text)",marginTop:4}}>
+                Ouvrez Mediconline depuis votre pharmacie et cliquez ce bouton pour une localisation précise.
+              </div>
             </div>
             <div className="grid-2">
               <div className="form-group">
@@ -3285,7 +4328,7 @@ export default function App() {
   const handleLogout=async()=>{await getAuth().signOut();setUser(null);setRole("patient");setPage("accueil");setStock([]);};
   if(!fbReady||!authChecked)return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh"}}><div className="loading"><div className="spinner"></div> Chargement Mediconline...</div></div>;
   const TABS_PATIENT=[{id:"accueil",label:"🏠 Accueil"},{id:"carte",label:"🗺 Carte"},{id:"garde",label:"🌙 Garde"},{id:"resultats",label:"🔍 Chercher"},{id:"compte",label:"👤 Compte"}];
-  const TABS_PH=[{id:"dashboard",label:"📊 Dashboard"},{id:"stock",label:"📦 Stock"},{id:"ajouter",label:"➕ Ajouter"},{id:"carte",label:"🗺 Carte"},{id:"garde",label:"🌙 Garde"},{id:"profil",label:"⚙️ Profil"}];
+  const TABS_PH=[{id:"dashboard",label:"📊 Dashboard"},{id:"stock",label:"📦 Stock"},{id:"ajouter",label:"➕ Ajouter"},{id:"stats",label:"📈 Stats"},{id:"profil",label:"⚙️ Profil"}];
   const tabs=role==="patient"?TABS_PATIENT:TABS_PH;
   return(
     <div className="app">
@@ -3333,6 +4376,7 @@ export default function App() {
       {role==="pharmacie"&&user&&page==="carte"    &&<PageCarte/>}
       {role==="pharmacie"&&user&&page==="garde"    &&<PageGarde setPage={setPage}/>}
       {role==="pharmacie"&&user&&page==="profil"   &&<ProfilPharmacie user={user}/>}
+      {role==="pharmacie"&&user&&page==="stats"    &&<PageStats user={user} stock={stock}/>}
       {page==="admin"  &&<PageAdmin setPage={setPage}/>}
       {page==="qrcode" &&<PageQRCode/>}
     </div>
