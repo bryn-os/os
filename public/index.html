@@ -22,8 +22,8 @@
     <meta property="og:title" content="Mediconline — Médicaments à Yaoundé" />
     <meta property="og:description" content="Trouvez vos médicaments au meilleur prix dans les pharmacies de Yaoundé" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://mediconline.netlify.app" />
-    <meta property="og:image" content="https://mediconline.netlify.app/icons/icon-512.png" />
+    <meta property="og:url" content="https://mediconline.vercel.app" />
+    <meta property="og:image" content="https://mediconline.vercel.app/icons/icon-512.png" />
 
     <!-- ══ MANIFEST PWA ══════════════════════════════════════════════ -->
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
@@ -45,6 +45,23 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Mulish:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
+    <script>
+      // Capturer le prompt PWA DÈS le début — avant React
+      window.__pwaPrompt = null;
+      window.__pwaInstalled = window.matchMedia("(display-mode: standalone)").matches;
+      window.addEventListener("beforeinstallprompt", function(e) {
+        e.preventDefault();
+        window.__pwaPrompt = e;
+        // Notifier React si déjà monté
+        if (window.__pwaPromptReady) window.__pwaPromptReady(e);
+        console.log("✅ PWA prompt capturé !");
+      });
+      window.addEventListener("appinstalled", function() {
+        window.__pwaInstalled = true;
+        window.__pwaPrompt = null;
+        console.log("✅ Mediconline installée !");
+      });
+    </script>
     <style>
       /* Splash screen pendant chargement */
       body { margin: 0; background: #0D2B3E; }
