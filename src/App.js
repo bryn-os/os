@@ -1786,7 +1786,7 @@ function FormulaireAvis({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
   );
 }
 
-function SectionAvis({ pharmacieId, pharmacieNom, user, fbReady }) {
+) {
   const {avis,moyenne,nbAvis} = useAvisPharmacie(pharmacieId, fbReady);
   const [showForm,setShowForm] = useState(false);
 
@@ -1949,7 +1949,7 @@ function SectionAvis({ pharmacieId, pharmacieNom, user, fbReady }) {
 }
 
 // ── Système d'avis et notes ─────────────────────────────────────────────────
-function EtoilesNote({ note, max=5, size=14 }) {
+) {
   return(
     <span style={{display:"inline-flex",gap:1}}>
       {Array.from({length:max},(_,i)=>(
@@ -1959,7 +1959,7 @@ function EtoilesNote({ note, max=5, size=14 }) {
   );
 }
 
-function AvisModal({ pharmacieId, pharmacieNom, user, onClose, fbReady }) {
+) {
   const [note,setNote]       = useState(0);
   const [hover,setHover]     = useState(0);
   const [commentaire,setCommentaire] = useState("");
@@ -2044,29 +2044,9 @@ function AvisModal({ pharmacieId, pharmacieNom, user, onClose, fbReady }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ⭐ SYSTÈME D'AVIS ET NOTES
 // ══════════════════════════════════════════════════════════════════════════════
-async function soumettreAvis(pharmacieUid, userId, userEmail, note, commentaire, fbReady) {
-  if(!fbReady) return false;
-  if(!userId) return false;
-  const avisId = "avis_"+userId+"_"+pharmacieUid;
-  await getDB().ref("avis/"+pharmacieUid+"/"+avisId).set({
-    userId, userEmail: userEmail||"anonyme",
-    note, commentaire: commentaire.trim(),
-    date: Date.now(),
-  });
-  // Recalculer la moyenne
-  const snap = await getDB().ref("avis/"+pharmacieUid).once("value");
-  if(snap.exists()){
-    const avis = Object.values(snap.val());
-    const moyenne = avis.reduce((s,a)=>s+(a.note||0),0)/avis.length;
-    await getDB().ref("pharmacies/"+pharmacieUid).update({
-      noteMoyenne: Math.round(moyenne*10)/10,
-      nbAvis: avis.length,
-    });
-  }
-  return true;
-}
+async 
 
-function EtoilesNote({ note, taille=16, onClick=null }) {
+) {
   return(
     <span style={{display:"inline-flex",gap:1,cursor:onClick?"pointer":"default"}}>
       {[1,2,3,4,5].map(i=>(
@@ -2167,34 +2147,7 @@ function detecterCompteSupect(nom, tel, email) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ⭐ SYSTÈME D'AVIS ET NOTES SUR LES PHARMACIES
 // ══════════════════════════════════════════════════════════════════════════════
-async function soumettreAvis(pharmacieId, pharmacieNom, note, commentaire, user, fbReady) {
-  if(!fbReady) return false;
-  const uid = user?.uid || ("anon_"+Date.now());
-  const avisId = uid+"_"+pharmacieId;
-  // Un seul avis par utilisateur par pharmacie
-  const existing = await getDB().ref("avis/"+pharmacieId+"/"+avisId).once("value");
-  if(existing.exists()) return "already";
-  await getDB().ref("avis/"+pharmacieId+"/"+avisId).set({
-    userId: uid,
-    userEmail: user?.email||"Anonyme",
-    note,
-    commentaire: commentaire.trim(),
-    pharmacieId,
-    pharmacieNom,
-    date: Date.now(),
-  });
-  // Mettre à jour la note moyenne
-  const allAvis = await getDB().ref("avis/"+pharmacieId).once("value");
-  if(allAvis.exists()) {
-    const notes = Object.values(allAvis.val()).map(a=>a.note||0);
-    const moyenne = notes.reduce((a,b)=>a+b,0)/notes.length;
-    await getDB().ref("pharmacies/"+pharmacieId).update({
-      noteMoyenne: Math.round(moyenne*10)/10,
-      nbAvis: notes.length,
-    });
-  }
-  return true;
-}
+async 
 
 function AvisModal({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
   const [note, setNote] = useState(0);
@@ -2252,7 +2205,7 @@ function AvisModal({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
   );
 }
 
-function EtoilesNote({ note, nb }) {
+) {
   if(!note) return null;
   const plein = Math.floor(note);
   const demi  = note - plein >= 0.5;
