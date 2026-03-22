@@ -3938,6 +3938,60 @@ Lng: "+pos.coords.longitude.toFixed(5));
             </div>
           </>
         )}
+
+      {/* ── ID Pharmacie pour le connecteur ── */}
+      <div className="card mt16" style={{border:"2px solid var(--teal)"}}>
+        <div className="card-header">
+          <div className="card-title">🔌 Connecteur Mediconline</div>
+        </div>
+        <div style={{fontSize:"0.83rem",color:"var(--grey-text)",marginBottom:12,lineHeight:1.6}}>
+          Pour synchroniser automatiquement votre stock depuis Winpharma, Vindata ou Excel, utilisez votre <strong>ID unique</strong> ci-dessous dans le connecteur.
+        </div>
+
+        {/* ID affiché en gros */}
+        <div style={{
+          background:"#0D2B3E",borderRadius:10,padding:"14px 18px",
+          display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,
+          flexWrap:"wrap"
+        }}>
+          <div>
+            <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.5)",marginBottom:4,fontFamily:"Mulish"}}>
+              Votre ID Pharmacie
+            </div>
+            <div style={{
+              fontFamily:"monospace",fontSize:"1rem",color:"#4DB8FF",
+              fontWeight:700,letterSpacing:"0.05em",wordBreak:"break-all"
+            }}>
+              {user?.uid||"—"}
+            </div>
+          </div>
+          <button
+            onClick={()=>{
+              navigator.clipboard?.writeText(user?.uid||"").then(()=>{
+                alert("✅ ID copié ! Collez-le dans le connecteur.");
+              }).catch(()=>{
+                prompt("Copiez cet ID :", user?.uid||"");
+              });
+            }}
+            style={{
+              background:"var(--teal)",color:"white",border:"none",
+              padding:"8px 18px",borderRadius:99,fontWeight:700,
+              cursor:"pointer",fontSize:"0.82rem",fontFamily:"Mulish",
+              whiteSpace:"nowrap"
+            }}>
+            📋 Copier l'ID
+          </button>
+        </div>
+
+        <div style={{marginTop:12,fontSize:"0.78rem",color:"var(--grey-text)",lineHeight:1.7}}>
+          <strong>Comment utiliser :</strong><br/>
+          1. Téléchargez le connecteur depuis <span style={{color:"var(--teal)"}}>mediconline.vercel.app</span><br/>
+          2. Double-cliquez sur <strong>LANCER_CONNECTEUR.bat</strong><br/>
+          3. Collez votre ID dans le champ "ID Pharmacie"<br/>
+          4. Indiquez le chemin de votre fichier de stock<br/>
+          5. Cliquez "Démarrer surveillance" — votre stock se met à jour automatiquement 🚀
+        </div>
+      </div>
       </div>
     </div>
   );
