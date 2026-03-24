@@ -1732,57 +1732,6 @@ function EtoilesInteractives({ note=0, editable=false, onChange=null }) {
     </div>
   );
 }
-) {
-  const [note,setNote]       = useState(0);
-  const [commentaire,setCommentaire] = useState("");
-  const [loading,setLoading] = useState(false);
-  const [erreur,setErreur]   = useState("");
-
-  const soumettre = async()=>{
-    if(note===0){ setErreur("Veuillez donner une note."); return; }
-    setLoading(true);
-    const userId = user?.uid || ("anon_"+Date.now());
-    // Vérifier si déjà noté
-    const existing = await getDB().ref("avis/"+pharmacieId).orderByChild("userId").equalTo(userId).once("value");
-    if(existing.exists()){
-      setErreur("Vous avez déjà noté cette pharmacie.");
-      setLoading(false); return;
-    }
-    await getDB().ref("avis/"+pharmacieId).push({
-      note, commentaire:commentaire.trim(),
-      userId, userNom: user?.nom||user?.email||"Patient anonyme",
-      pharmacieNom, date:Date.now()
-    });
-    setLoading(false);
-    onClose();
-  };
-
-  return(
-    <div style={{padding:"16px",background:"#F9FAFB",borderRadius:12,marginTop:12,border:"1px solid #E5E7EB"}}>
-      <div style={{fontWeight:700,fontSize:"0.9rem",color:"var(--navy)",marginBottom:12}}>
-        ⭐ Donner mon avis sur {pharmacieNom}
-      </div>
-      {erreur&&<div style={{color:"#DC2626",fontSize:"0.8rem",marginBottom:8}}>{erreur}</div>}
-      <div style={{marginBottom:12}}>
-        <div style={{fontSize:"0.8rem",color:"var(--grey-text)",marginBottom:4}}>Ma note *</div>
-        <EtoilesAvis note={note} editable onChange={setNote}/>
-      </div>
-      <div style={{marginBottom:12}}>
-        <div style={{fontSize:"0.8rem",color:"var(--grey-text)",marginBottom:4}}>Commentaire (optionnel)</div>
-        <textarea className="form-input" rows={3} maxLength={200}
-          placeholder="Votre expérience avec cette pharmacie..."
-          value={commentaire} onChange={e=>setCommentaire(e.target.value)}
-          style={{resize:"none",fontFamily:"Mulish",fontSize:"0.83rem"}}/>
-      </div>
-      <div style={{display:"flex",gap:8}}>
-        <button className="btn btn-primary btn-sm" onClick={soumettre} disabled={loading}>
-          {loading?"⏳ Envoi...":"✅ Soumettre"}
-        </button>
-        <button className="btn btn-secondary btn-sm" onClick={onClose}>Annuler</button>
-      </div>
-    </div>
-  );
-}
 function EtoileNote({ note, max=5, taille=16, editable=false, onChange }) {
   const [hover, setHover] = useState(0);
   return(
