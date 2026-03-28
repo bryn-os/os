@@ -1716,8 +1716,7 @@ function useAvisPharmacie(pharmacieId, fbReady) {
   },[fbReady,pharmacieId]);
 
   return {avis,moyenne,nbAvis};
-}
-function EtoilesInteractives({ note=0, editable=false, onChange=null }) {
+}) {
   const [hover,setHover] = useState(0);
   return(
     <div style={{display:"flex",gap:2}}>
@@ -1825,8 +1824,7 @@ function SectionAvis({ pharmacieId, pharmacieNom, user, fbReady }) {
   );
 }
 
-// ── Système d'avis et notes ─────────────────────────────────────────────────
-function MiniEtoiles({ note, max=5, size="0.85rem" }) {
+// ── Système d'avis et notes ─────────────────────────────────────────────────) {
   return(
     <span style={{display:"inline-flex",gap:1}}>
       {Array.from({length:max},(_,i)=>(
@@ -1835,8 +1833,7 @@ function MiniEtoiles({ note, max=5, size="0.85rem" }) {
     </span>
   );
 }
-
-function FormulaireAvis({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
+) {
   const [note,setNote]       = useState(0);
   const [hover,setHover]     = useState(0);
   const [commentaire,setCommentaire] = useState("");
@@ -1922,8 +1919,7 @@ function FormulaireAvis({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
 // ⭐ SYSTÈME D'AVIS ET NOTES
 // ══════════════════════════════════════════════════════════════════════════════
 async 
-
-function EtoilesAvis({ note=0, taille="1rem", onClick=null }) {
+) {
   return(
     <span style={{display:"inline-flex",gap:1,cursor:onClick?"pointer":"default"}}>
       {[1,2,3,4,5].map(i=>(
@@ -1935,8 +1931,7 @@ function EtoilesAvis({ note=0, taille="1rem", onClick=null }) {
     </span>
   );
 }
-
-function ModalAvis({ pharmacieUid, pharmacieNom, user, fbReady, onClose }) {
+) {
   const [note,setNote]=useState(0);
   const [commentaire,setCommentaire]=useState("");
   const [loading,setLoading]=useState(false);
@@ -2025,8 +2020,7 @@ function detecterCompteSupect(nom, tel, email) {
 // ⭐ SYSTÈME D'AVIS ET NOTES SUR LES PHARMACIES
 // ══════════════════════════════════════════════════════════════════════════════
 async 
-
-function AvisModal({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
+) {
   const [note, setNote] = useState(0);
   const [commentaire, setCommentaire] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2081,8 +2075,7 @@ function AvisModal({ pharmacieId, pharmacieNom, user, fbReady, onClose }) {
     </div>
   );
 }
-
-function NoteEtoiles({ note }) {
+) {
   if(!note) return null;
   const plein = Math.floor(note);
   const demi  = note - plein >= 0.5;
